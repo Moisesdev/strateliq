@@ -15,13 +15,13 @@ function parseAssistant(text) {
   const tagsMatch = text.match(/\[TAGS:\s*([^\]]+)\]/i);
   const tags = tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()).filter(Boolean) : [];
 
-  const anMatch = text.match(/##\s*An[aá]lisis\s*\n([\s\S]*?)(?=##\s*Conclusi[oó]n Estrat[eé]gica|$)/i);
+  const anMatch = text.match(/##\s*An[aá]lisis\s*\n([\s\S]*?)(?=##\s*Conclusi[oó]n\s+Estrat[eé]gica|$)/i);
   const analysis = anMatch ? anMatch[1].trim() : "";
 
-  const conMatch = text.match(/##\s*Conclusi[oó]n Estrat[eé]gica\s*\n([\s\S]*?)(?=##\s*Acciones Recomendadas|$)/i);
+  const conMatch = text.match(/##\s*Conclusi[oó]n\s+Estrat[eé]gica\s*\n([\s\S]*?)(?=##\s*Acciones\s+Recomendadas|$)/i);
   const conclusion = conMatch ? conMatch[1].trim() : "";
 
-  const actMatch = text.match(/##\s*Acciones Recomendadas\s*\n([\s\S]*?)$/i);
+  const actMatch = text.match(/##\s*Acciones\s+Recomendadas\s*\n([\s\S]*?)$/i);
   let actions = [];
   if (actMatch) {
     actions = actMatch[1]
@@ -211,7 +211,7 @@ export default function Chat() {
           currentEvent = "message";
           for (const l of lines) {
             if (l.startsWith("event:")) currentEvent = l.slice(6).trim();
-            else if (l.startsWith("data:")) dataStr += l.slice(5).trimStart();
+            else if (l.startsWith("data:")) dataStr += l.slice(5).replace(/^ /, "");
           }
 
           if (currentEvent === "meta") {
@@ -235,7 +235,11 @@ export default function Chat() {
               .replace(/\\\\/g, "\\");
             setMessages((prev) => {
               const copy = [...prev];
-              copy[copy.length - 1] = { role: "assistant", content: (copy[copy.length - 1].content || "") + delta };
+              if (copy.length === 0 || copy[copy.length - 1].role !== "assistant") {
+                copy.push({ role: "assistant", content: delta });
+              } else {
+                copy[copy.length - 1] = { role: "assistant", content: (copy[copy.length - 1].content || "") + delta };
+              }
               return copy;
             });
             scrollToBottom();

@@ -1,0 +1,61 @@
+{
+  "summary": "Retest of Chat.jsx after fixes to (1) SSE parser space handling and (2) Dashboard→Chat race condition. All 5 requested checks PASS. Zero pageerrors captured across three end-to-end flows.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_1.json",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Chat.jsx L214 fix (l.slice(5).replace(/^ /, '')) is correct per the SSE spec (only ONE leading U+0020 must be stripped). Inter-token spaces are preserved and multi-word markers render correctly.",
+    "Delta handler guard at L236-244 correctly pushes a fresh assistant message if the last message is missing/user, eliminating the TypeError seen in iteration 1.",
+    "parseAssistant regexes now use \\s+ between multi-word markers ('Conclusi[oó]n\\s+Estrat[eé]gica', 'Acciones\\s+Recomendadas') — resilient to whitespace variants.",
+    "Nice-to-have (unchanged from iter 1): consider wrapping /app routes in an ErrorBoundary and adding data-testid to ThemeToggle."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "not-tested-this-iteration (100% in iter 1)",
+    "frontend": "100% for the 5 requested Chat.jsx checks"
+  },
+  "test_credentials": "admin@strateliq.dev / Admin1234!",
+  "seed_data_creation": "None. Test session created 2 new conversations under the admin user via the real gpt-4.1-mini stream (via EMERGENT_LLM_KEY).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Chat.jsx bugs from iter 1 are fully fixed. Verified: (1) Dashboard→'Consultar al Comité' navigates to /app/chat and streams without runtime overlay; user message renders; assistant renders with tags (Marketing/Ventas/Operaciones), styled Análisis, bordered Conclusión, bullet Acciones. (2) Direct typing in /app/chat streams and structures output identically; URL is rewritten to /app/chat/conv_xxx via meta event. (3) Loading /app/chat/:conversationId from Historial rehydrates prior conversation with the same structured rendering (Finanzas/Operaciones tags, Análisis, Conclusión, Acciones — 3 bullet items). No merged-words bad patterns detected (Paracrear, Elcomité, Estrategiade, parael, Análisisde all absent). No raw '## ...' or '[TAGS:' markers leak into the DOM. No PAGEERRORS captured in any of the three flows. Real LLM output verified end-to-end (not just 200 OK).",
+  "verification_evidence": {
+    "flow_dashboard_initial_message": {
+      "pageerrors": 0,
+      "runtime_overlay": false,
+      "assistant_tags": ["Marketing", "Ventas", "Operaciones"],
+      "sections_rendered": ["Análisis", "Conclusión estratégica", "Acciones recomendadas"],
+      "raw_markers_leaked": false,
+      "ol_li_count": 5,
+      "bad_spacing_patterns_found": []
+    },
+    "flow_direct_typing": {
+      "pageerrors": 0,
+      "assistant_tags": ["Finanzas", "Operaciones"],
+      "sections_rendered": ["Análisis", "Conclusión estratégica", "Acciones recomendadas"],
+      "url_after_send": "/app/chat/conv_39d95502fa58",
+      "ol_li_count": 3,
+      "bad_spacing_patterns_found": []
+    },
+    "flow_history_reload": {
+      "pageerrors": 0,
+      "url": "/app/chat/conv_39d95502fa58",
+      "user_msg_hydrated": "Dame 3 acciones concretas para reducir costos operativos.",
+      "sections_rendered": ["Análisis", "Conclusión estratégica", "Acciones recomendadas"],
+      "ol_li_count": 3,
+      "bad_spacing_patterns_found": []
+    }
+  },
+  "rca of the issue": "Iter 1 root causes are both resolved. RCA-1 (words merged): SSE spec allows a single optional leading space in a 'data:' field for readability; .trimStart() ate the second space that belonged to the token payload. Replacing with .replace(/^ /, '') removes only the one separator space per spec, so 'data:  Comité' yields ' Comité' (correct). RCA-2 (TypeError): the routeConvId effect and location.state effect both fired on initial mount; the setMessages([]) reset could win the race and produce an empty array by the time the first delta arrived at setMessages callback, which then indexed copy[copy.length-1] (undefined) and read .content. The defensive push at L236-244 makes the reducer self-healing regardless of ordering."
+}
