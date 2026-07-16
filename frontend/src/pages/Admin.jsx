@@ -13,6 +13,7 @@ const PROVIDERS = {
   openai: ["gpt-4.1-mini", "gpt-4.1", "gpt-5", "gpt-5-mini", "gpt-4o", "o4-mini"],
   anthropic: ["claude-sonnet-4-6", "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "claude-opus-4-7"],
   gemini: ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-pro"],
+  openrouter: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.1-70b-instruct", "google/gemini-2.0-flash-exp:free"],
 };
 
 export default function Admin() {
@@ -80,6 +81,7 @@ export default function Admin() {
                 <SelectItem value="openai">OpenAI</SelectItem>
                 <SelectItem value="anthropic">Anthropic</SelectItem>
                 <SelectItem value="gemini">Google Gemini</SelectItem>
+                <SelectItem value="openrouter">OpenRouter</SelectItem>
               </SelectContent>
             </Select>
           </div>

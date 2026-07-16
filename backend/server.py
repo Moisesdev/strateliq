@@ -4,17 +4,24 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import json
+import asyncio
+import secrets
 import logging
 import uuid
 import bcrypt
 import jwt as pyjwt
 import httpx
+import resend
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Literal
 from datetime import datetime, timezone, timedelta
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -27,6 +34,16 @@ db = client[os.environ['DB_NAME']]
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
+
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ---------- App ----------
 app = FastAPI(title="STRATELIQ API")
@@ -138,7 +155,7 @@ class ChatInput(BaseModel):
 
 
 class AdminConfigInput(BaseModel):
-    provider: Literal["openai", "anthropic", "gemini"]
+    provider: Literal["openai", "anthropic", "gemini", "openrouter"]
     model: str
 
 
@@ -499,37 +516,74 @@ async def stream_chat(user: dict, message: str, conversation_id: Optional[str]):
     ).sort("created_at", 1).to_list(50)
 
     system_message = build_system_prompt(company)
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=conversation_id,
-        system_message=system_message,
-    ).with_model(cfg["provider"], cfg["model"])
 
-    # Send message with history: emergentintegrations manages history via session_id
-    # but we send just the latest user message; the library keeps context per session.
-    user_msg = UserMessage(text=message)
+    def sse_data(text: str) -> str:
+        safe = text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "")
+        return f"data: {safe}\n\n"
 
     full_text = ""
 
-    async def generator():
+    async def openrouter_stream():
         nonlocal full_text
-        # Emit conversation_id first as a control event
+        # Rebuild history for context
+        messages_payload = [{"role": "system", "content": system_message}]
+        for m in prior:
+            messages_payload.append({"role": m["role"], "content": m["content"]})
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://strateliq.app",
+            "X-Title": "STRATELIQ",
+        }
+        body = {"model": cfg["model"], "messages": messages_payload, "stream": True}
+        async with httpx.AsyncClient(timeout=120) as http_client:
+            async with http_client.stream(
+                "POST", "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers, json=body,
+            ) as resp:
+                if resp.status_code != 200:
+                    err_text = (await resp.aread()).decode(errors="ignore")[:400]
+                    raise RuntimeError(f"OpenRouter {resp.status_code}: {err_text}")
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                        delta = obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    except Exception:
+                        delta = ""
+                    if delta:
+                        full_text += delta
+                        yield delta
+
+    async def emergent_stream():
+        nonlocal full_text
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=conversation_id,
+            system_message=system_message,
+        ).with_model(cfg["provider"], cfg["model"])
+        async for ev in chat.stream_message(UserMessage(text=message)):
+            if isinstance(ev, TextDelta):
+                full_text += ev.content
+                yield ev.content
+            elif isinstance(ev, StreamDone):
+                break
+
+    async def generator():
         yield f"event: meta\ndata: {{\"conversation_id\": \"{conversation_id}\"}}\n\n"
         try:
-            async for ev in chat.stream_message(user_msg):
-                if isinstance(ev, TextDelta):
-                    full_text += ev.content
-                    # Escape newlines for SSE
-                    safe = ev.content.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "")
-                    yield f"data: {safe}\n\n"
-                elif isinstance(ev, StreamDone):
-                    break
+            iterator = openrouter_stream() if cfg["provider"] == "openrouter" else emergent_stream()
+            async for delta in iterator:
+                yield sse_data(delta)
         except Exception as e:
             logger.exception("LLM stream error")
             err = str(e).replace("\"", "'")
             yield f"event: error\ndata: {err}\n\n"
         finally:
-            # Persist assistant message
             await db.messages.insert_one({
                 "message_id": f"msg_{uuid.uuid4().hex[:12]}",
                 "conversation_id": conversation_id,
@@ -556,6 +610,254 @@ async def chat_stream(payload: ChatInput, user=Depends(get_current_user)):
     return await stream_chat(user, payload.message, payload.conversation_id)
 
 
+# ---------- Password Reset ----------
+class ForgotPasswordInput(BaseModel):
+    email: EmailStr
+    frontend_origin: str
+
+
+class ResetPasswordInput(BaseModel):
+    token: str
+    new_password: str
+
+
+def send_email_async(to: str, subject: str, html: str):
+    """Fire-and-forget email send via Resend. Uses threadpool to avoid blocking."""
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY missing, skipping email to %s", to)
+        return
+    params = {"from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html}
+    try:
+        return resend.Emails.send(params)
+    except Exception:
+        logger.exception("Resend email send failed")
+        return None
+
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(payload: ForgotPasswordInput):
+    user = await db.users.find_one({"email": payload.email.lower()}, {"_id": 0})
+    # Always return ok (avoid email enumeration)
+    if not user or not user.get("password_hash"):
+        return {"ok": True}
+
+    token = secrets.token_urlsafe(32)
+    expires_at = now_utc() + timedelta(hours=1)
+    await db.password_resets.insert_one({
+        "token": token,
+        "user_id": user["user_id"],
+        "expires_at": iso(expires_at),
+        "used": False,
+        "created_at": iso(now_utc()),
+    })
+
+    origin = payload.frontend_origin.rstrip("/")
+    reset_link = f"{origin}/reset-password?token={token}"
+    html = f"""
+    <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#0A0F1C">
+      <div style="font-weight:800;font-size:20px;letter-spacing:-0.02em;margin-bottom:24px;color:#0066FF">STRATELIQ</div>
+      <h1 style="font-size:22px;font-weight:600;margin:0 0 12px;letter-spacing:-0.02em">Recupera tu contraseña</h1>
+      <p style="font-size:15px;line-height:1.6;color:#3B4252;margin:0 0 20px">Hola {user.get('name', 'ejecutivo')}, recibimos una solicitud para restablecer tu contraseña. Este enlace expira en 1 hora.</p>
+      <a href="{reset_link}" style="display:inline-block;background:#0066FF;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:500;font-size:14px">Restablecer contraseña</a>
+      <p style="font-size:13px;color:#8A94A6;margin:24px 0 0;line-height:1.6">Si no solicitaste este cambio, ignora este correo. Tu contraseña actual seguirá funcionando.</p>
+      <p style="font-size:12px;color:#8A94A6;margin-top:32px;border-top:1px solid #E5E7EB;padding-top:16px">STRATELIQ · Comité Ejecutivo Virtual</p>
+    </div>
+    """
+    await asyncio.to_thread(send_email_async, user["email"], "Restablece tu contraseña · STRATELIQ", html)
+    return {"ok": True}
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password(payload: ResetPasswordInput):
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
+    doc = await db.password_resets.find_one({"token": payload.token}, {"_id": 0})
+    if not doc or doc.get("used"):
+        raise HTTPException(status_code=400, detail="Enlace inválido o ya usado")
+    expires_at = doc["expires_at"]
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now_utc():
+        raise HTTPException(status_code=400, detail="El enlace ha expirado")
+
+    await db.users.update_one(
+        {"user_id": doc["user_id"]},
+        {"$set": {"password_hash": hash_password(payload.new_password)}},
+    )
+    await db.password_resets.update_one(
+        {"token": payload.token},
+        {"$set": {"used": True, "used_at": iso(now_utc())}},
+    )
+    return {"ok": True}
+
+
+# ---------- Subscription (Stripe) ----------
+PLANS = {
+    "inicial": {"name": "Inicial", "amount": 1.00, "currency": "usd", "period_days": 30},
+    "pro": {"name": "Pro", "amount": 19.00, "currency": "usd", "period_days": 30},
+    "max": {"name": "Max", "amount": 49.00, "currency": "usd", "period_days": 30},
+}
+
+
+class CheckoutInput(BaseModel):
+    plan_id: Literal["inicial", "pro", "max"]
+    origin_url: str
+
+
+@api_router.get("/plans")
+async def list_plans():
+    return [{"id": k, **v} for k, v in PLANS.items()]
+
+
+@api_router.get("/subscription")
+async def get_subscription(user=Depends(get_current_user)):
+    sub = await db.subscriptions.find_one(
+        {"user_id": user["user_id"], "status": "active"}, {"_id": 0}
+    )
+    if not sub:
+        return {"plan_id": "free", "plan_name": "Free", "status": "free", "expires_at": None}
+    expires_at = sub.get("expires_at")
+    if isinstance(expires_at, str):
+        exp = datetime.fromisoformat(expires_at)
+    else:
+        exp = expires_at
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp and exp < now_utc():
+        await db.subscriptions.update_one({"user_id": user["user_id"], "status": "active"}, {"$set": {"status": "expired"}})
+        return {"plan_id": "free", "plan_name": "Free", "status": "expired", "expires_at": iso(exp)}
+    return {
+        "plan_id": sub["plan_id"],
+        "plan_name": PLANS[sub["plan_id"]]["name"],
+        "status": "active",
+        "expires_at": iso(exp) if exp else None,
+    }
+
+
+@api_router.post("/checkout/session")
+async def create_checkout(payload: CheckoutInput, request: Request, user=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="Stripe no configurado")
+    plan = PLANS[payload.plan_id]
+    origin = payload.origin_url.rstrip("/")
+    success_url = f"{origin}/app/billing?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/app/billing?canceled=1"
+
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+    req = CheckoutSessionRequest(
+        amount=plan["amount"],
+        currency=plan["currency"],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_id": user["user_id"],
+            "email": user["email"],
+            "plan_id": payload.plan_id,
+        },
+    )
+    session = await stripe_checkout.create_checkout_session(req)
+
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "plan_id": payload.plan_id,
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "metadata": {"plan_id": payload.plan_id},
+        "payment_status": "initiated",
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+
+async def _activate_subscription(user_id: str, plan_id: str):
+    plan = PLANS[plan_id]
+    expires_at = now_utc() + timedelta(days=plan["period_days"])
+    # Deactivate previous
+    await db.subscriptions.update_many(
+        {"user_id": user_id, "status": "active"}, {"$set": {"status": "replaced"}},
+    )
+    await db.subscriptions.insert_one({
+        "subscription_id": f"sub_{uuid.uuid4().hex[:12]}",
+        "user_id": user_id,
+        "plan_id": plan_id,
+        "status": "active",
+        "started_at": iso(now_utc()),
+        "expires_at": iso(expires_at),
+    })
+
+
+@api_router.get("/checkout/status/{session_id}")
+async def checkout_status(session_id: str, request: Request, user=Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transacción no encontrada")
+
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    status = await stripe_checkout.get_checkout_status(session_id)
+
+    # Only activate once
+    already_paid = tx.get("payment_status") == "paid"
+    if status.payment_status == "paid" and not already_paid:
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {
+                "payment_status": status.payment_status,
+                "status": status.status,
+                "amount_total": status.amount_total,
+                "updated_at": iso(now_utc()),
+            }},
+        )
+        await _activate_subscription(user["user_id"], tx["plan_id"])
+    else:
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": status.payment_status, "status": status.status, "updated_at": iso(now_utc())}},
+        )
+    return {
+        "payment_status": status.payment_status,
+        "status": status.status,
+        "amount_total": status.amount_total,
+        "currency": status.currency,
+        "plan_id": tx["plan_id"],
+    }
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    if not STRIPE_API_KEY:
+        return {"ok": False}
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    try:
+        evt = await stripe_checkout.handle_webhook(body, sig)
+    except Exception:
+        logger.exception("Stripe webhook error")
+        return {"ok": False}
+
+    if evt.payment_status == "paid":
+        tx = await db.payment_transactions.find_one({"session_id": evt.session_id}, {"_id": 0})
+        if tx and tx.get("payment_status") != "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": evt.session_id},
+                {"$set": {"payment_status": "paid", "status": "completed", "webhook_at": iso(now_utc())}},
+            )
+            await _activate_subscription(tx["user_id"], tx["plan_id"])
+    return {"ok": True}
+
+
 # Health
 @api_router.get("/")
 async def root():
@@ -571,9 +873,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 
 @app.on_event("shutdown")

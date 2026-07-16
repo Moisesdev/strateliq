@@ -6,10 +6,13 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { Toaster } from "@/components/ui/sonner";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Shell } from "@/components/Shell";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 import AuthCallback from "@/pages/AuthCallback";
 import Onboarding from "@/pages/Onboarding";
 import Dashboard from "@/pages/Dashboard";
@@ -18,6 +21,7 @@ import Company from "@/pages/Company";
 import History from "@/pages/History";
 import Settings from "@/pages/Settings";
 import Admin from "@/pages/Admin";
+import Billing from "@/pages/Billing";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,6 +40,8 @@ function AppRouter() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
 
       <Route
@@ -103,6 +109,14 @@ function AppRouter() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/app/billing"
+        element={
+          <ProtectedRoute>
+            <Shell><Billing /></Shell>
+          </ProtectedRoute>
+        }
+      />
     </Routes>
   );
 }
@@ -114,7 +128,9 @@ export default function App() {
         <ThemeProvider>
           <BrowserRouter>
             <AuthProvider>
-              <AppRouter />
+              <ErrorBoundary>
+                <AppRouter />
+              </ErrorBoundary>
               <Toaster position="top-center" richColors closeButton />
             </AuthProvider>
           </BrowserRouter>

@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Bell, CreditCard, User, LogOut, Check } from "lucide-react";
+import { Bell, CreditCard, User, LogOut, Check, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 
@@ -28,6 +29,16 @@ export default function Settings() {
   const [name, setName] = useState(user?.name || "");
   const [savingName, setSavingName] = useState(false);
   const [notif, setNotif] = useState(() => localStorage.getItem("strateliq-notif") !== "false");
+  const [sub, setSub] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/subscription");
+        setSub(data);
+      } catch (e) { /* ignore */ }
+    })();
+  }, []);
 
   const saveName = async () => {
     setSavingName(true);
@@ -86,11 +97,28 @@ export default function Settings() {
         <Section icon={CreditCard} title="Suscripción">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <div className="text-sm font-medium">Plan Founder · Gratis</div>
-              <div className="text-sm text-muted-foreground mt-1">Acceso completo al Comité Ejecutivo Virtual.</div>
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-medium">Plan {sub?.plan_name || "Free"}</div>
+                {sub?.status === "active" && (
+                  <Badge variant="outline" className="border-[hsl(var(--success))]/40 bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] text-[10px]">
+                    Activo
+                  </Badge>
+                )}
+              </div>
+              <div className="text-sm text-muted-foreground mt-1">
+                {sub?.status === "active" && sub?.expires_at
+                  ? `Renueva el ${new Date(sub.expires_at).toLocaleDateString("es", { day: "2-digit", month: "short", year: "numeric" })}`
+                  : "Actualiza para desbloquear consultas ilimitadas y funciones avanzadas."}
+              </div>
             </div>
-            <Button variant="outline" className="rounded-full" data-testid="upgrade-btn" disabled>
-              Actualizar plan
+            <Button
+              variant={sub?.status === "active" ? "outline" : "default"}
+              className="rounded-full"
+              onClick={() => navigate("/app/billing")}
+              data-testid="upgrade-btn"
+            >
+              {sub?.status === "active" ? "Gestionar plan" : "Ver planes"}
+              <ArrowRight className="ml-1.5 h-4 w-4" strokeWidth={1.5} />
             </Button>
           </div>
         </Section>
