@@ -155,8 +155,28 @@ class ChatInput(BaseModel):
 
 
 class AdminConfigInput(BaseModel):
-    provider: Literal["openai", "anthropic", "gemini", "openrouter"]
+    provider: Literal["openai", "anthropic", "gemini", "openrouter", "custom"]
     model: str
+
+
+class ApiKeysInput(BaseModel):
+    openai_key: Optional[str] = None
+    openrouter_key: Optional[str] = None
+    custom_key: Optional[str] = None
+    custom_base_url: Optional[str] = None
+
+
+class PlanUpdateInput(BaseModel):
+    name: str
+    amount: float
+    currency: str = "usd"
+    period_days: int = 30
+    stripe_payment_link: Optional[str] = None
+    features: Optional[List[str]] = None
+
+
+class UserAdminUpdate(BaseModel):
+    is_admin: Optional[bool] = None
 
 
 class ProfileUpdate(BaseModel):
@@ -360,6 +380,11 @@ async def update_company(payload: CompanyInput, user=Depends(get_current_user)):
 DEFAULT_CONFIG = {"provider": "openai", "model": "gpt-4.1-mini"}
 
 
+def _require_admin(user: dict):
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Solo administradores")
+
+
 async def get_llm_config():
     cfg = await db.admin_config.find_one({"_key": "llm"}, {"_id": 0})
     if not cfg:
@@ -367,23 +392,137 @@ async def get_llm_config():
     return {"provider": cfg.get("provider", "openai"), "model": cfg.get("model", "gpt-4.1-mini")}
 
 
+async def get_api_keys():
+    """Return dict of provider -> key/base_url from DB, falling back to env."""
+    doc = await db.admin_config.find_one({"_key": "api_keys"}, {"_id": 0}) or {}
+    return {
+        "openai_key": doc.get("openai_key") or "",
+        "openrouter_key": doc.get("openrouter_key") or OPENROUTER_API_KEY,
+        "custom_key": doc.get("custom_key") or "",
+        "custom_base_url": doc.get("custom_base_url") or "",
+    }
+
+
 @api_router.get("/admin/config")
 async def admin_get_config(user=Depends(get_current_user)):
-    if not user.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Solo administradores")
+    _require_admin(user)
     return await get_llm_config()
 
 
 @api_router.put("/admin/config")
 async def admin_set_config(payload: AdminConfigInput, user=Depends(get_current_user)):
-    if not user.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Solo administradores")
+    _require_admin(user)
     await db.admin_config.update_one(
         {"_key": "llm"},
         {"$set": {"provider": payload.provider, "model": payload.model, "updated_at": iso(now_utc())}},
         upsert=True,
     )
     return {"provider": payload.provider, "model": payload.model}
+
+
+def _mask_key(k: str) -> str:
+    if not k:
+        return ""
+    if len(k) <= 8:
+        return "•" * len(k)
+    return k[:4] + "•" * 8 + k[-4:]
+
+
+@api_router.get("/admin/api-keys")
+async def admin_get_api_keys(user=Depends(get_current_user)):
+    _require_admin(user)
+    keys = await get_api_keys()
+    return {
+        "openai_key_masked": _mask_key(keys["openai_key"]),
+        "openrouter_key_masked": _mask_key(keys["openrouter_key"]),
+        "custom_key_masked": _mask_key(keys["custom_key"]),
+        "custom_base_url": keys["custom_base_url"],
+        "has_openai": bool(keys["openai_key"]),
+        "has_openrouter": bool(keys["openrouter_key"]),
+        "has_custom": bool(keys["custom_key"] and keys["custom_base_url"]),
+    }
+
+
+@api_router.put("/admin/api-keys")
+async def admin_set_api_keys(payload: ApiKeysInput, user=Depends(get_current_user)):
+    _require_admin(user)
+    updates = {"updated_at": iso(now_utc())}
+    # Only overwrite provided fields; empty string means clear
+    for field in ["openai_key", "openrouter_key", "custom_key", "custom_base_url"]:
+        val = getattr(payload, field)
+        if val is not None:
+            updates[field] = val.strip()
+    await db.admin_config.update_one(
+        {"_key": "api_keys"}, {"$set": updates}, upsert=True,
+    )
+    return await admin_get_api_keys(user)
+
+
+# --- Users management ---
+@api_router.get("/admin/users")
+async def admin_list_users(user=Depends(get_current_user), q: Optional[str] = None):
+    _require_admin(user)
+    query = {}
+    if q:
+        query = {"$or": [
+            {"email": {"$regex": q, "$options": "i"}},
+            {"name": {"$regex": q, "$options": "i"}},
+        ]}
+    users = await db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
+    return users
+
+
+@api_router.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, payload: UserAdminUpdate, user=Depends(get_current_user)):
+    _require_admin(user)
+    updates = {}
+    if payload.is_admin is not None:
+        # Prevent self-demotion to avoid lockout
+        if user_id == user["user_id"] and payload.is_admin is False:
+            raise HTTPException(status_code=400, detail="No puedes remover tus propios permisos de admin")
+        updates["is_admin"] = payload.is_admin
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nada que actualizar")
+    result = await db.users.update_one({"user_id": user_id}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, user=Depends(get_current_user)):
+    _require_admin(user)
+    if user_id == user["user_id"]:
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta")
+    result = await db.users.delete_one({"user_id": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    # Cleanup related data
+    await db.companies.delete_many({"user_id": user_id})
+    await db.conversations.delete_many({"user_id": user_id})
+    await db.messages.delete_many({"user_id": user_id})
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.subscriptions.delete_many({"user_id": user_id})
+    return {"ok": True}
+
+
+# --- Plans management ---
+@api_router.get("/admin/plans")
+async def admin_list_plans(user=Depends(get_current_user)):
+    _require_admin(user)
+    return await get_plans_list()
+
+
+@api_router.put("/admin/plans/{plan_id}")
+async def admin_update_plan(plan_id: str, payload: PlanUpdateInput, user=Depends(get_current_user)):
+    _require_admin(user)
+    await seed_plans_if_empty()
+    updates = payload.model_dump(exclude_none=True)
+    updates["updated_at"] = iso(now_utc())
+    result = await db.plans.update_one({"plan_id": plan_id}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
+    return await db.plans.find_one({"plan_id": plan_id}, {"_id": 0})
 
 
 @api_router.put("/profile")
@@ -516,6 +655,7 @@ async def stream_chat(user: dict, message: str, conversation_id: Optional[str]):
     ).sort("created_at", 1).to_list(50)
 
     system_message = build_system_prompt(company)
+    keys = await get_api_keys()
 
     def sse_data(text: str) -> str:
         safe = text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "")
@@ -523,27 +663,29 @@ async def stream_chat(user: dict, message: str, conversation_id: Optional[str]):
 
     full_text = ""
 
-    async def openrouter_stream():
+    async def openai_compatible_stream(base_url: str, api_key: str, provider_label: str):
+        """Stream from any OpenAI-compatible endpoint (OpenRouter, custom, etc)."""
         nonlocal full_text
-        # Rebuild history for context
+        if not api_key:
+            raise RuntimeError(f"{provider_label} API key no configurada. Configúrala en Admin → API Keys.")
+        if not base_url:
+            raise RuntimeError(f"{provider_label} base URL no configurada.")
         messages_payload = [{"role": "system", "content": system_message}]
         for m in prior:
             messages_payload.append({"role": m["role"], "content": m["content"]})
         headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://strateliq.app",
             "X-Title": "STRATELIQ",
         }
+        url = base_url.rstrip("/") + "/chat/completions"
         body = {"model": cfg["model"], "messages": messages_payload, "stream": True}
         async with httpx.AsyncClient(timeout=120) as http_client:
-            async with http_client.stream(
-                "POST", "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=body,
-            ) as resp:
+            async with http_client.stream("POST", url, headers=headers, json=body) as resp:
                 if resp.status_code != 200:
                     err_text = (await resp.aread()).decode(errors="ignore")[:400]
-                    raise RuntimeError(f"OpenRouter {resp.status_code}: {err_text}")
+                    raise RuntimeError(f"{provider_label} {resp.status_code}: {err_text}")
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -561,8 +703,12 @@ async def stream_chat(user: dict, message: str, conversation_id: Optional[str]):
 
     async def emergent_stream():
         nonlocal full_text
+        # Prefer DB-stored OpenAI key when provider is openai and admin set one
+        api_key = EMERGENT_LLM_KEY
+        if cfg["provider"] == "openai" and keys.get("openai_key"):
+            api_key = keys["openai_key"]
         chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
+            api_key=api_key,
             session_id=conversation_id,
             system_message=system_message,
         ).with_model(cfg["provider"], cfg["model"])
@@ -576,7 +722,16 @@ async def stream_chat(user: dict, message: str, conversation_id: Optional[str]):
     async def generator():
         yield f"event: meta\ndata: {{\"conversation_id\": \"{conversation_id}\"}}\n\n"
         try:
-            iterator = openrouter_stream() if cfg["provider"] == "openrouter" else emergent_stream()
+            if cfg["provider"] == "openrouter":
+                iterator = openai_compatible_stream(
+                    "https://openrouter.ai/api/v1", keys["openrouter_key"], "OpenRouter"
+                )
+            elif cfg["provider"] == "custom":
+                iterator = openai_compatible_stream(
+                    keys["custom_base_url"], keys["custom_key"], "Custom"
+                )
+            else:
+                iterator = emergent_stream()
             async for delta in iterator:
                 yield sse_data(delta)
         except Exception as e:
@@ -694,21 +849,45 @@ async def reset_password(payload: ResetPasswordInput):
 
 
 # ---------- Subscription (Stripe) ----------
-PLANS = {
-    "inicial": {"name": "Inicial", "amount": 1.00, "currency": "usd", "period_days": 30},
-    "pro": {"name": "Pro", "amount": 19.00, "currency": "usd", "period_days": 30},
-    "max": {"name": "Max", "amount": 49.00, "currency": "usd", "period_days": 30},
-}
+DEFAULT_PLANS = [
+    {"plan_id": "inicial", "name": "Inicial", "amount": 1.00, "currency": "usd", "period_days": 30, "stripe_payment_link": None, "features": ["Consultas ilimitadas", "Export PDF", "Compartir conversaciones"], "order": 1},
+    {"plan_id": "pro", "name": "Pro", "amount": 19.00, "currency": "usd", "period_days": 30, "stripe_payment_link": None, "features": ["Todo lo del plan Inicial", "Análisis multidisciplinario profundo", "Soporte prioritario"], "order": 2},
+    {"plan_id": "max", "name": "Max", "amount": 49.00, "currency": "usd", "period_days": 30, "stripe_payment_link": None, "features": ["Todo lo del plan Pro", "Configuración de modelo IA avanzado", "Estrategia trimestral acompañada"], "order": 3},
+]
+
+
+async def seed_plans_if_empty():
+    count = await db.plans.count_documents({})
+    if count == 0:
+        for p in DEFAULT_PLANS:
+            await db.plans.insert_one({**p, "created_at": iso(now_utc())})
+
+
+async def get_plans_list():
+    plans = await db.plans.find({}, {"_id": 0}).sort("order", 1).to_list(50)
+    if not plans:
+        await seed_plans_if_empty()
+        plans = await db.plans.find({}, {"_id": 0}).sort("order", 1).to_list(50)
+    return plans
+
+
+async def get_plan(plan_id: str):
+    p = await db.plans.find_one({"plan_id": plan_id}, {"_id": 0})
+    if not p:
+        await seed_plans_if_empty()
+        p = await db.plans.find_one({"plan_id": plan_id}, {"_id": 0})
+    return p
 
 
 class CheckoutInput(BaseModel):
-    plan_id: Literal["inicial", "pro", "max"]
+    plan_id: str
     origin_url: str
 
 
 @api_router.get("/plans")
-async def list_plans():
-    return [{"id": k, **v} for k, v in PLANS.items()]
+async def list_plans_public():
+    plans = await get_plans_list()
+    return [{"id": p["plan_id"], **{k: v for k, v in p.items() if k != "plan_id"}} for p in plans]
 
 
 @api_router.get("/subscription")
@@ -728,9 +907,10 @@ async def get_subscription(user=Depends(get_current_user)):
     if exp and exp < now_utc():
         await db.subscriptions.update_one({"user_id": user["user_id"], "status": "active"}, {"$set": {"status": "expired"}})
         return {"plan_id": "free", "plan_name": "Free", "status": "expired", "expires_at": iso(exp)}
+    plan = await get_plan(sub["plan_id"])
     return {
         "plan_id": sub["plan_id"],
-        "plan_name": PLANS[sub["plan_id"]]["name"],
+        "plan_name": plan["name"] if plan else sub["plan_id"],
         "status": "active",
         "expires_at": iso(exp) if exp else None,
     }
@@ -738,9 +918,31 @@ async def get_subscription(user=Depends(get_current_user)):
 
 @api_router.post("/checkout/session")
 async def create_checkout(payload: CheckoutInput, request: Request, user=Depends(get_current_user)):
+    plan = await get_plan(payload.plan_id)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Plan no encontrado")
+
+    # If admin configured a Stripe Payment Link, use it directly
+    if plan.get("stripe_payment_link"):
+        # Track transaction as external
+        session_id = f"link_{uuid.uuid4().hex[:12]}"
+        await db.payment_transactions.insert_one({
+            "session_id": session_id,
+            "user_id": user["user_id"],
+            "email": user["email"],
+            "plan_id": payload.plan_id,
+            "amount": plan["amount"],
+            "currency": plan["currency"],
+            "metadata": {"plan_id": payload.plan_id, "type": "payment_link"},
+            "payment_status": "initiated",
+            "status": "pending",
+            "created_at": iso(now_utc()),
+        })
+        return {"url": plan["stripe_payment_link"], "session_id": session_id, "type": "payment_link"}
+
     if not STRIPE_API_KEY:
         raise HTTPException(status_code=500, detail="Stripe no configurado")
-    plan = PLANS[payload.plan_id]
+
     origin = payload.origin_url.rstrip("/")
     success_url = f"{origin}/app/billing?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/app/billing?canceled=1"
@@ -774,12 +976,14 @@ async def create_checkout(payload: CheckoutInput, request: Request, user=Depends
         "status": "pending",
         "created_at": iso(now_utc()),
     })
-    return {"url": session.url, "session_id": session.session_id}
+    return {"url": session.url, "session_id": session.session_id, "type": "checkout"}
 
 
 async def _activate_subscription(user_id: str, plan_id: str):
-    plan = PLANS[plan_id]
-    expires_at = now_utc() + timedelta(days=plan["period_days"])
+    plan = await get_plan(plan_id)
+    if not plan:
+        return
+    expires_at = now_utc() + timedelta(days=plan.get("period_days", 30))
     # Deactivate previous
     await db.subscriptions.update_many(
         {"user_id": user_id, "status": "active"}, {"$set": {"status": "replaced"}},
