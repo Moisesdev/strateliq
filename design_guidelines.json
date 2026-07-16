@@ -1,0 +1,115 @@
+{
+  "typography": {
+    "headings": {
+      "font_family": "Manrope, sans-serif",
+      "strategy": "Clean, authoritative, Apple-like. DO NOT use Inter for headings. Use Manrope for a modern executive feel.",
+      "weights": ["font-medium", "font-semibold", "font-bold"],
+      "tracking": "tracking-tight",
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter leading-none",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight leading-tight",
+      "h3": "text-xl sm:text-2xl tracking-tight"
+    },
+    "body": {
+      "font_family": "Inter, sans-serif",
+      "strategy": "Stripe/Linear style legibility. High clarity for data and dense chat UI.",
+      "sizes": {
+        "large": "text-lg leading-relaxed",
+        "default": "text-base leading-relaxed",
+        "small": "text-sm text-muted-foreground",
+        "micro": "text-xs uppercase tracking-[0.2em] font-medium"
+      }
+    }
+  },
+  "colors": {
+    "strategy": "Restrained color palette. Monochrome base with Bright Blue for primary actions and Green EXCLUSIVELY for success/growth confirmations.",
+    "light": {
+      "background": "#FFFFFF",
+      "surface": "#F9FAFB",
+      "foreground": "#0A0F1C",
+      "muted": "#8A94A6",
+      "border": "#E5E7EB",
+      "primary": "#0066FF",
+      "success": "#10B981"
+    },
+    "dark": {
+      "background": "#06080F",
+      "surface": "#0F1322",
+      "foreground": "#F8FAFC",
+      "muted": "#64748B",
+      "border": "#1E293B",
+      "primary": "#3B82F6",
+      "success": "#10B981"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": "Extremely soft ambient shadows. shadow-sm or shadow-[0_4px_24px_rgba(0,0,0,0.04)] for cards. No harsh drop shadows.",
+    "border_radius": "Subtle roundness. Use rounded-xl for main cards, rounded-lg for inputs/buttons.",
+    "borders": "1px hairlines border-border/40 to define structure instead of color fills. Linear-style precise borders.",
+    "glassmorphism": "Use backdrop-blur-xl bg-background/80 for sticky headers and the mobile bottom navigation bar. NEVER fully transparent.",
+    "whitespace": "Generous spacing. p-8 to p-12 for dashboard containers. Linear and Stripe use whitespace as a structural element."
+  },
+  "layouts": {
+    "mobile": "Mobile First strategy. Bottom navigation bar (fixed, bottom-0, glassmorphism) with 5 max options (Dashboard, Chat, Company, History, Settings). No hamburger menu for primary nav.",
+    "desktop": "Collapsible left sidebar (w-64). Main content area with max-w-5xl mx-auto and generous side padding (p-8 to p-12).",
+    "dashboard_hero": "Central massive input box: '¿Qué decisión necesitas tomar hoy?'. Minimalist, centered in the viewport like Google/ChatGPT homepage.",
+    "history": "Gmail-style dense list. Border-bottom separators only. Date, Title, Search. No bulky cards.",
+    "chat": "Strategic Committee style. Minimal bubbles, precise typography. Use tags for categories (Marketing, Finanzas)."
+  },
+  "grids": {
+    "dashboard_quick_actions": "Bento Grid Protocol. grid-cols-2 md:grid-cols-3 gap-4. Cards should be flat, rounded-xl, 1px border, subtle hover effect."
+  },
+  "motion": {
+    "strategy": "Minimalist and snappy. No bouncy or slow animations.",
+    "hover": "Subtle translation (-translate-y-[1px]) and shadow increase for cards. Color shift for buttons.",
+    "transitions": "transition-all duration-200 ease-out",
+    "page_load": "Fade in content slightly from bottom (framer-motion opacity: 0 -> 1, y: 10 -> 0)."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets APCA/WCAG AA standards. Focus states must have a high-contrast Bright Blue ring (ring-2 ring-primary ring-offset-2).",
+    "screen_readers": "Aria labels for icon-only buttons (like sidebar collapse).",
+    "testing": "All interactive elements MUST include data-testid attributes (e.g., data-testid='decision-input', data-testid='login-button')."
+  },
+  "image_urls": [
+    {
+      "url": "https://images.pexels.com/photos/12903168/pexels-photo-12903168.jpeg",
+      "category": "landing_hero",
+      "description": "Professional team collaborating on a project. Use with a subtle gradient overlay to ensure text contrast."
+    },
+    {
+      "url": "https://images.pexels.com/photos/7580644/pexels-photo-7580644.jpeg",
+      "category": "landing_testimonials",
+      "description": "Business professionals discussing documents in a modern office."
+    },
+    {
+      "url": "https://images.unsplash.com/photo-1637665662134-db459c1bbb46",
+      "category": "landing_features",
+      "description": "A clean conference room. Represents the 'Virtual Executive Committee' concept."
+    }
+  ],
+  "components": {
+    "button": "Pill-shaped (rounded-full) or gently rounded (rounded-lg). Primary: bg-primary text-white. Secondary: bg-surface border border-border.",
+    "input": "Massive input for the dashboard (h-16 text-xl rounded-2xl). Normal inputs: h-10 rounded-lg. Focus state: Bright blue ring.",
+    "cards": "Cardless approach where possible, or flat with 1px border and very soft shadow. bg-card text-card-foreground.",
+    "sidebar": "Desktop only. Clean links with lucide-react icons. Active state gets a subtle bg-muted fill.",
+    "bottom_nav": "Mobile only. Fixed bottom. Flex justify-around. Icon + tiny text. Active state gets primary color."
+  },
+  "component_path": "/app/frontend/src/components/ui",
+  "instructions_to_main_agent": {
+    "1": "Implement Manrope for headings and Inter for body text. Add Manrope via Google Fonts in index.html.",
+    "2": "Setup Tailwind colors exactly as defined to support automatic Dark/Light mode detection.",
+    "3": "Build the layout components first: a responsive Shell that uses Bottom Nav on mobile and Left Sidebar on desktop.",
+    "4": "The Dashboard must feature the giant input box prominently. It should not look like a standard SaaS metric dashboard. It is a decision engine.",
+    "5": "Do not add unnecessary charts. Follow 'Less is More'.",
+    "6": "Use Lucide-react for all icons. Ensure stroke-width is 1.5 for a premium Apple-like feel.",
+    "7": "Do not center align paragraphs or lists. Left-align for reading comfort.",
+    "8": "Use `sonner` for toast notifications."
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic outputs. Make this UI distinctively 'Linear/Apple' - which means extreme precision, hairline borders, zero clutter, and sophisticated typography.",
+    "NEVER use fully transparent backgrounds for sticky headers or bottom navs. Use glassmorphism.",
+    "DO NOT apply universal transitions (transition: all). Target specific properties.",
+    "NEVER use emojis for icons. Use lucide-react.",
+    "Use 2x more padding inside containers than usual. Whitespace is your primary design tool here.",
+    "Create depth through luminance (bg color steps) and hairline borders rather than heavy drop shadows."
+  ]
+}
