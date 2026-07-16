@@ -1,0 +1,64 @@
+{
+  "summary": "Full functional coverage of STRATELIQ. Backend: 16/16 pytest tests pass (health, auth JWT flow, duplicate email, wrong password, protected 401, onboarding, company GET/PUT, profile update, admin config incl. RBAC, conversations list/search/get/delete, real gpt-4.1-mini SSE stream verified end-to-end with structured markers). Frontend: Landing/Login/Register/Onboarding/Dashboard/History/Company/Settings/Admin all render, navigation works, sidebar collapsible, non-admin redirected from /app/admin, mobile bottom nav shows 5 tabs, sidebar hidden on mobile. TWO CRITICAL frontend bugs found in Chat.jsx that break the AI experience: (1) SSE data lines are parsed with .trimStart() which drops the leading space of every LLM token, producing text with no spaces between words ('Paracrearunaidearapida…') and breaking regex parsing of 'Conclusión Estratégica' / 'Acciones Recomendadas' headings. (2) Uncaught TypeError 'Cannot read properties of undefined (reading content)' when arriving to /app/chat from Dashboard with initialMessage state — full-screen runtime error overlay appears and the whole chat page crashes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Chat.jsx",
+        "issue": "SSE parser drops inter-token spaces from LLM stream. Line 214: `dataStr += l.slice(5).trimStart();` strips ALL leading whitespace. Per SSE spec only ONE leading U+0020 (the field separator) should be removed. Backend emits e.g. `data:  Comité` where the second space belongs to the token content. Result: the visible analysis/conclusion/actions render concatenated ('Paracrearunaidearapidaquepotencie...') and parseAssistant's regexes for '## Conclusión Estratégica' / '## Acciones Recomendadas' fail because the streamed text becomes '##ConclusiónEstratégica' / '##AccionesRecomendadas', so those raw headings appear inside the Análisis block.",
+        "selector": "src/pages/Chat.jsx L214",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Chat.jsx",
+        "issue": "Uncaught runtime TypeError: 'Cannot read properties of undefined (reading content)' when the user submits a decision from the Dashboard (navigate('/app/chat', { state: { initialMessage } })). Full runtime-error overlay appears; the streamed reply never renders. Root cause is a race between the two useEffects in Chat.jsx: the routeConvId effect fires `setMessages([])` at the same time the location.state effect calls `send(initial)`, which pushes user+assistant messages. When the first `data:` delta arrives, `prev` can be [] and `copy[copy.length-1].content` throws. Reproduces every time from Dashboard → Consultar al Comité. Typing directly in /app/chat does NOT trigger it.",
+        "selector": "src/pages/Chat.jsx L141-168 + L236-240",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "ThemeToggle",
+        "issue": "No data-testid on the theme toggle button, so playwright tests cannot target it directly. The functionality itself works (localStorage 'strateliq-theme' is set) but automation is fragile.",
+        "selector": "components/ThemeToggle.jsx",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Chat streaming (gpt-4.1-mini via EMERGENT_LLM_KEY)",
+        "issue": "Backend SSE contract works end-to-end (meta+deltas+done verified via curl and pytest). Frontend parser client-side breaks the display (see bugs above). LLM output IS structured correctly: 'El Comité Estratégico analizó tu consulta.' + [TAGS:…] + ## Análisis + ## Conclusión Estratégica + ## Acciones Recomendadas.",
+        "affected_selectors": ["Chat.jsx delta parser"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix SSE parser in src/pages/Chat.jsx line 214: replace `l.slice(5).trimStart()` with a single leading-space strip, e.g. `l.slice(5).replace(/^ /, \"\")` so that token-boundary spaces are preserved. This will also make parseAssistant's regexes for 'Conclusión Estratégica' and 'Acciones Recomendadas' match again.",
+    "Fix Chat.jsx race that causes 'Cannot read properties of undefined (reading content)' when navigated from Dashboard with initialMessage. Two safe options: (a) guard the delta path — if `copy.length === 0 || copy[copy.length-1].role !== 'assistant'` push `{ role:'assistant', content:'' }` first; (b) merge the two initial effects so `setMessages([])` never runs after `send()` has appended. Option (a) is defensive and self-healing.",
+    "(nice-to-have) Add `data-testid=\"theme-toggle\"` to the ThemeToggle button for stable UI test targeting."
+  ],
+  "critical_code_review_comments": [
+    "server.py SSE encoding: content is embedded directly after `data: ` without escaping the SSE field-separator space contract; combined with the frontend `.trimStart()` bug this is why words merge. Safer alternative: base64-encode or JSON-wrap each delta (e.g. `data: {\"t\":\"...\"}`).",
+    "Chat.jsx has no error boundary — a single uncaught state error blanks the whole page. Wrapping the /app routes in an ErrorBoundary would prevent full crashes.",
+    "parseAssistant regexes hardcode a single space between multi-word headings ('Conclusi[oó]n Estrat[eé]gica') — fragile against any whitespace change. Consider `\\s+` instead of literal space.",
+    "get_current_user JWT branch catches broad `Exception` and silently falls through to session lookup — could mask malformed-token errors during debugging."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "80%"
+  },
+  "test_credentials": "demo@strateliq.dev / Demo1234!  |  admin@strateliq.dev / Admin1234!",
+  "seed_data_creation": "Test suite creates ephemeral registered users prefixed with 'test_'/'onb_' (uuid) plus a TEST_ company for the demo user. No cleanup performed — safe since prefixed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two CRITICAL Chat.jsx bugs remain: (1) SSE trimStart drops token spaces (fix line 214), (2) delta-arrives-with-empty-messages TypeError when coming from Dashboard's Consultar al Comité button. Everything else (backend, auth, onboarding, company, admin, history, mobile nav, sidebar collapse, non-admin redirect) is verified working. Re-test only Chat.jsx after main agent fix — reproduce with (a) Dashboard → Consultar al Comité (should NOT throw and message should render with spaces) and (b) direct /app/chat typing (spaces should be preserved and Conclusión/Acciones sections should split correctly). Backend pytest file is /app/backend/tests/backend_test.py — run with REACT_APP_BACKEND_URL exported."
+}
