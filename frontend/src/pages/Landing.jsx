@@ -64,8 +64,12 @@ export default function Landing() {
           api.get("/plans"),
           api.get("/registration-status")
         ]);
-        setPlans(plansRes.data.filter(p => p.active !== false));
-        setFreeRegActive(regRes.data.free_registration_active);
+        if (plansRes && Array.isArray(plansRes.data)) {
+          setPlans(plansRes.data.filter(p => p.active !== false));
+        }
+        if (regRes && regRes.data) {
+          setFreeRegActive(!!regRes.data.free_registration_active);
+        }
       } catch (e) {
         console.error("Error loading landing data:", e);
       }
@@ -96,7 +100,9 @@ export default function Landing() {
                   </Button>
                 </Link>
                 <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-secondary text-xs font-semibold text-foreground select-none">
-                  {user.name ? user.name.split(" ").map(n => n[0]).join("").toUpperCase() : user.email[0].toUpperCase()}
+                  {user.name 
+                    ? user.name.split(" ").map(n => n[0]).join("").toUpperCase() 
+                    : (user.email ? user.email[0].toUpperCase() : "?")}
                 </div>
               </div>
             ) : (
