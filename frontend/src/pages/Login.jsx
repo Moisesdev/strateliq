@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
@@ -13,16 +13,22 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { loginEmail, loginGoogle } = useAuth();
+  const { user, loading: authLoading, loginEmail, loginGoogle } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate("/app", { replace: true });
+    }
+  }, [user, authLoading, navigate]);
 
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const user = await loginEmail(email, password);
+      await loginEmail(email, password);
       toast.success("Bienvenido de vuelta");
-      navigate(user.onboarding_completed ? "/app" : "/onboarding", { replace: true });
+      navigate("/app", { replace: true });
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Credenciales inválidas");
     } finally {

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { BrandingProvider } from "@/context/BrandingContext";
 import { Toaster } from "@/components/ui/sonner";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Shell } from "@/components/Shell";
@@ -126,14 +127,16 @@ export default function App() {
     <div className="App">
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <BrowserRouter>
-            <AuthProvider>
-              <ErrorBoundary>
-                <AppRouter />
-              </ErrorBoundary>
-              <Toaster position="top-center" richColors closeButton />
-            </AuthProvider>
-          </BrowserRouter>
+          <BrandingProvider>
+            <BrowserRouter>
+              <AuthProvider>
+                <ErrorBoundary>
+                  <AppRouter />
+                </ErrorBoundary>
+                <Toaster position="top-center" richColors closeButton />
+              </AuthProvider>
+            </BrowserRouter>
+          </BrandingProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </div>

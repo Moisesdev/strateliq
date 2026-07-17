@@ -1,10 +1,14 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Sparkles, Brain, ShieldCheck, Zap, Building2, LineChart, Users } from "lucide-react";
+import { ArrowRight, Sparkles, Brain, ShieldCheck, Zap, Building2, LineChart, Users, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useAuth } from "@/context/AuthContext";
 
 const BENEFITS = [
   {
@@ -49,20 +53,62 @@ const FAQ = [
 ];
 
 export default function Landing() {
+  const { user, loading } = useAuth();
+  const [plans, setPlans] = useState([]);
+  const [freeRegActive, setFreeRegActive] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [plansRes, regRes] = await Promise.all([
+          api.get("/plans"),
+          api.get("/registration-status")
+        ]);
+        setPlans(plansRes.data.filter(p => p.active !== false));
+        setFreeRegActive(regRes.data.free_registration_active);
+      } catch (e) {
+        console.error("Error loading landing data:", e);
+      }
+    })();
+  }, []);
+
+  const handleStartNavigation = (e) => {
+    if (!freeRegActive) {
+      e.preventDefault();
+      document.getElementById("pricing")?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Nav */}
       <header className="sticky top-0 z-40 glass border-b border-border/50">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-5 md:px-8 h-16">
           <Logo />
-          <div className="flex items-center gap-2 md:gap-3">
+          <div className="flex items-center gap-2.5">
             <ThemeToggle />
-            <Link to="/login">
-              <Button variant="ghost" size="sm" data-testid="landing-login-link">Iniciar sesión</Button>
-            </Link>
-            <Link to="/register">
-              <Button size="sm" data-testid="landing-signup-link" className="rounded-full">Empezar</Button>
-            </Link>
+            {!loading && user ? (
+              <div className="flex items-center gap-3">
+                <Link to="/app">
+                  <Button variant="ghost" size="sm" className="rounded-full gap-1.5">
+                    Consola
+                    <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  </Button>
+                </Link>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-secondary text-xs font-semibold text-foreground select-none">
+                  {user.name ? user.name.split(" ").map(n => n[0]).join("").toUpperCase() : user.email[0].toUpperCase()}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 md:gap-3">
+                <Link to="/login">
+                  <Button variant="ghost" size="sm" data-testid="landing-login-link">Iniciar sesión</Button>
+                </Link>
+                <Link to="/register" onClick={handleStartNavigation}>
+                  <Button size="sm" data-testid="landing-signup-link" className="rounded-full">Empezar</Button>
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -84,17 +130,28 @@ export default function Landing() {
               STRATELIQ no es un chatbot. Es tu Comité Ejecutivo Virtual: conoce tu negocio y te ayuda a tomar mejores decisiones en marketing, finanzas, ventas y operaciones.
             </p>
             <div className="mt-8 flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <Link to="/register">
-                <Button size="lg" className="rounded-full h-12 px-6 text-base" data-testid="hero-cta-btn">
-                  Empezar gratis
-                  <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
-                </Button>
-              </Link>
-              <Link to="/login">
-                <Button size="lg" variant="ghost" className="rounded-full h-12 px-6 text-base" data-testid="hero-login-btn">
-                  Ya tengo cuenta
-                </Button>
-              </Link>
+              {!loading && user ? (
+                <Link to="/app">
+                  <Button size="lg" className="rounded-full h-12 px-6 text-base" data-testid="hero-cta-btn">
+                    Ir a la consola
+                    <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                  </Button>
+                </Link>
+              ) : (
+                <>
+                  <Link to="/register" onClick={handleStartNavigation}>
+                    <Button size="lg" className="rounded-full h-12 px-6 text-base" data-testid="hero-cta-btn">
+                      Empezar Ahora
+                      <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                    </Button>
+                  </Link>
+                  <Link to="/login">
+                    <Button size="lg" variant="ghost" className="rounded-full h-12 px-6 text-base" data-testid="hero-login-btn">
+                      Ya tengo cuenta
+                    </Button>
+                  </Link>
+                </>
+              )}
             </div>
             <div className="mt-10 text-xs uppercase tracking-[0.2em] text-muted-foreground">
               Diseñado para emprendedores · CEOs · gerentes · profesionales
@@ -175,6 +232,86 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Pricing / Planes */}
+      <section id="pricing" className="border-t border-border/50 bg-background/50">
+        <div className="max-w-5xl mx-auto px-5 md:px-8 py-20 md:py-28">
+          <div className="text-center max-w-2xl mx-auto mb-16">
+            <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-3">Planes y Precios</div>
+            <h2 className="font-display text-3xl md:text-4xl lg:text-5xl font-semibold tracking-tight leading-[1.1]">
+              Elige el plan ideal para impulsar tu negocio.
+            </h2>
+            <p className="mt-4 text-muted-foreground text-sm leading-relaxed">
+              Consigue asesoramiento estratégico constante y personalizado. Acceso inmediato a tu Comité Ejecutivo.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            {plans.map((p) => (
+              <div
+                key={p.plan_id}
+                className={cn(
+                  "rounded-2xl border bg-card p-6 md:p-8 flex flex-col justify-between space-y-6 transition-all duration-200 hover:border-border",
+                  p.name.toLowerCase().includes("premium") || p.name.toLowerCase().includes("pro")
+                    ? "border-primary/40 shadow-sm"
+                    : "border-border/60"
+                )}
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-display text-xl font-semibold">{p.name}</h3>
+                    {p.name.toLowerCase().includes("premium") || p.name.toLowerCase().includes("pro") ? (
+                      <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
+                        Recomendado
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-4xl font-bold tracking-tight">${p.amount}</span>
+                    <span className="text-sm font-normal text-muted-foreground">/{p.period_days === 30 ? "mes" : `${p.period_days} días`}</span>
+                  </div>
+                  <div className="h-px bg-border/40" />
+                  <ul className="space-y-2.5 text-sm">
+                    {(p.features || []).map((f, idx) => (
+                      <li key={idx} className="flex items-start gap-2 text-muted-foreground">
+                        <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" strokeWidth={2} />
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="pt-4">
+                  {p.stripe_payment_link ? (
+                    <a href={p.stripe_payment_link} target="_blank" rel="noopener noreferrer" className="w-full">
+                      <Button className="w-full h-11 rounded-full font-medium" variant={p.name.toLowerCase().includes("premium") || p.name.toLowerCase().includes("pro") ? "default" : "outline"}>
+                        Adquirir Plan
+                        <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                      </Button>
+                    </a>
+                  ) : p.amount === 0 ? (
+                    <Link to="/register" onClick={handleStartNavigation} className="w-full">
+                      <Button className="w-full h-11 rounded-full font-medium" variant="outline" disabled={!freeRegActive}>
+                        {freeRegActive ? "Empezar gratis" : "Registro cerrado"}
+                        <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                      </Button>
+                    </Link>
+                  ) : (
+                    <Button className="w-full h-11 rounded-full font-medium" variant="outline" disabled>
+                      Sin link de pago
+                      <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {plans.length === 0 && (
+              <div className="col-span-full text-center py-10 rounded-2xl border border-dashed border-border p-6">
+                <p className="text-muted-foreground text-sm">No hay planes de pago disponibles configurados en este momento.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* FAQ */}
       <section className="border-t border-border/50 bg-secondary/30">
         <div className="max-w-3xl mx-auto px-5 md:px-8 py-20 md:py-28">
@@ -203,17 +340,30 @@ export default function Landing() {
           <h2 className="font-display text-3xl md:text-5xl font-semibold tracking-tighter">
             ¿Qué decisión<br />necesitas tomar hoy?
           </h2>
-          <p className="mt-6 text-lg text-muted-foreground max-w-xl mx-auto">
-            Empieza gratis. Sin tarjeta. Sin complicaciones.
-          </p>
-          <div className="mt-8">
-            <Link to="/register">
-              <Button size="lg" className="rounded-full h-12 px-8 text-base" data-testid="cta-register-btn">
-                Crear mi cuenta
-                <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
-              </Button>
-            </Link>
-          </div>
+          {!loading && user ? (
+            <div className="mt-8">
+              <Link to="/app">
+                <Button size="lg" className="rounded-full h-12 px-8 text-base" data-testid="cta-register-btn">
+                  Volver al Dashboard
+                  <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            <>
+              <p className="mt-6 text-lg text-muted-foreground max-w-xl mx-auto">
+                Empieza gratis. Sin tarjeta. Sin complicaciones.
+              </p>
+              <div className="mt-8">
+                <Link to="/register">
+                  <Button size="lg" className="rounded-full h-12 px-8 text-base" data-testid="cta-register-btn">
+                    Crear mi cuenta
+                    <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.75} />
+                  </Button>
+                </Link>
+              </div>
+            </>
+          )}
         </div>
       </section>
 

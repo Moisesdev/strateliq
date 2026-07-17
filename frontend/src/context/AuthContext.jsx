@@ -1,56 +1,86 @@
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 import { api } from "@/lib/api";
 
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error("Supabase URL and Anon Key must be defined in frontend environment variables.");
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
     } catch (e) {
       setUser(null);
-    } finally {
-      setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    // If coming from OAuth callback, let AuthCallback handle the session exchange first.
-    if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session) {
+        localStorage.setItem("strateliq-token", session.access_token);
+        try {
+          const { data } = await api.get("/auth/me");
+          setUser(data);
+        } catch (e) {
+          setUser({
+            user_id: session.user.id,
+            email: session.user.email,
+            name: session.user.user_metadata?.name || session.user.email.split("@")[0],
+            is_admin: session.user.email === "admin@strateliq.dev" || !!session.user.user_metadata?.is_admin,
+            onboarding_completed: false
+          });
+        }
+      } else {
+        localStorage.removeItem("strateliq-token");
+        setUser(null);
+      }
       setLoading(false);
-      return;
-    }
-    refresh();
-  }, [refresh]);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const loginEmail = async (email, password) => {
-    const { data } = await api.post("/auth/login", { email, password });
-    if (data.token) localStorage.setItem("strateliq-token", data.token);
-    setUser(data.user);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
     return data.user;
   };
 
   const register = async (email, password, name) => {
-    const { data } = await api.post("/auth/register", { email, password, name });
-    if (data.token) localStorage.setItem("strateliq-token", data.token);
-    setUser(data.user);
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { name }
+      }
+    });
+    if (error) throw error;
     return data.user;
   };
 
-  const loginGoogle = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/auth/callback";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  const loginGoogle = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin + "/app"
+      }
+    });
+    if (error) throw error;
   };
 
   const logout = async () => {
-    try { await api.post("/auth/logout"); } catch (e) { /* noop */ }
-    localStorage.removeItem("strateliq-token");
-    setUser(null);
+    await supabase.auth.signOut();
   };
 
   return (

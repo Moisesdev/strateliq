@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowUpRight, Sparkles, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api, API } from "@/lib/api";
@@ -130,6 +130,75 @@ export default function Chat() {
   const [conversationId, setConversationId] = useState(routeConvId || null);
   const scrollRef = useRef(null);
   const initialTriggered = useRef(false);
+
+  // Web Speech API for voice dictation
+  const [isListening, setIsListening] = useState(false);
+  const isListeningRef = useRef(isListening);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = false;
+        rec.interimResults = false;
+        rec.lang = "es-ES";
+
+        rec.onstart = () => {
+          setIsListening(true);
+          toast.info("Escuchando... Hablá ahora");
+        };
+
+        rec.onresult = (event) => {
+          const transcript = event.results[0][0].transcript;
+          setInput((prev) => (prev ? prev.trim() + " " + transcript : transcript));
+        };
+
+        rec.onerror = (event) => {
+          console.error("Speech recognition error:", event.error);
+          if (event.error !== "no-speech") {
+            toast.error("Error de dictado: " + event.error);
+          }
+          setIsListening(false);
+        };
+
+        rec.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = rec;
+      }
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      toast.error("El dictado por voz no está soportado en este navegador.");
+      return;
+    }
+    if (isListeningRef.current) {
+      recognitionRef.current.stop();
+    } else {
+      recognitionRef.current.start();
+    }
+  };
+
+  // Keyboard shortcut Ctrl + Shift + D
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        toggleListening();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -322,16 +391,35 @@ export default function Chat() {
             />
             <div className="mt-2 flex items-center justify-between">
               <div className="text-[11px] text-muted-foreground">Enter para enviar</div>
-              <Button
-                size="sm"
-                onClick={() => send()}
-                disabled={!input.trim() || streaming}
-                className="rounded-full h-9 px-4"
-                data-testid="chat-send-btn"
-              >
-                {streaming ? "Analizando…" : "Consultar"}
-                {!streaming && <ArrowUpRight className="ml-1 h-4 w-4" strokeWidth={1.75} />}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => send()}
+                  disabled={!input.trim() || streaming}
+                  className="rounded-full h-9 px-4"
+                  data-testid="chat-send-btn"
+                >
+                  {streaming ? "Analizando…" : "Consultar"}
+                  {!streaming && <ArrowUpRight className="ml-1 h-4 w-4" strokeWidth={1.75} />}
+                </Button>
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  className={cn(
+                    "rounded-full p-2 border border-border/60 hover:bg-secondary transition-all flex items-center justify-center h-9 w-9 relative group",
+                    isListening && "bg-destructive/10 border-destructive/25 text-destructive animate-pulse"
+                    // Nota: para no usar clases Tailwind no estándar de color que violen las pautas de design.md, usamos border/background de card/destructive
+                  )}
+                  title="Dictar consulta (Ctrl + Shift + D)"
+                  disabled={streaming}
+                >
+                  {isListening ? (
+                    <MicOff className="h-4 w-4 text-destructive" strokeWidth={1.5} />
+                  ) : (
+                    <Mic className="h-4 w-4 text-muted-foreground group-hover:text-foreground" strokeWidth={1.5} />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

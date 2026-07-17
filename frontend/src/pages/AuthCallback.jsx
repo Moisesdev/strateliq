@@ -1,10 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, supabase } from "@/context/AuthContext";
 import { toast } from "sonner";
 
-// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 export default function AuthCallback() {
   const hasProcessed = useRef(false);
   const navigate = useNavigate();
@@ -15,9 +14,23 @@ export default function AuthCallback() {
     hasProcessed.current = true;
 
     const hash = window.location.hash || "";
+    if (hash.includes("access_token=") || hash.includes("id_token=")) {
+      // Dejar que Supabase procese el token en el AuthContext
+      setTimeout(() => {
+        navigate("/app", { replace: true });
+      }, 1000);
+      return;
+    }
+
     const match = hash.match(/session_id=([^&]+)/);
     if (!match) {
-      navigate("/login", { replace: true });
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          navigate("/app", { replace: true });
+        } else {
+          navigate("/login", { replace: true });
+        }
+      });
       return;
     }
     const sessionId = decodeURIComponent(match[1]);
@@ -26,7 +39,6 @@ export default function AuthCallback() {
       try {
         const { data } = await api.post("/auth/session", { session_id: sessionId });
         setUser(data.user);
-        // Clean the URL hash
         window.history.replaceState(null, "", window.location.pathname);
         toast.success("Sesión iniciada");
         navigate(data.user.onboarding_completed ? "/app" : "/onboarding", { replace: true });

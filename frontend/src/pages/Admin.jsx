@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Shield, Check, Search, UserPlus, UserMinus, Trash2, KeyRound, LayoutList, Users } from "lucide-react";
+import { Shield, Check, Search, UserPlus, UserMinus, Trash2, KeyRound, LayoutList, Users, Palette, Upload, Image, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useAuth } from "@/context/AuthContext";
+import { useBranding } from "@/context/BrandingContext";
 import { api } from "@/lib/api";
 import { Navigate } from "react-router-dom";
 
@@ -35,12 +37,14 @@ function ModelTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customModel, setCustomModel] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get("/admin/config");
         setConfig(data);
+        setSystemPrompt(data.system_prompt || "");
       } catch (e) { /* ignore */ }
       finally { setLoading(false); }
     })();
@@ -50,8 +54,13 @@ function ModelTab() {
     setSaving(true);
     try {
       const finalModel = customModel.trim() || config.model;
-      const { data } = await api.put("/admin/config", { provider: config.provider, model: finalModel });
+      const { data } = await api.put("/admin/config", {
+        provider: config.provider,
+        model: finalModel,
+        system_prompt: systemPrompt
+      });
       setConfig(data);
+      setSystemPrompt(data.system_prompt || "");
       setCustomModel("");
       toast.success("Configuración actualizada");
     } catch (e) {
@@ -114,6 +123,68 @@ function ModelTab() {
             ? "Configura la URL base y la API key en la pestaña API Keys."
             : "Si se llena, sobreescribe el modelo seleccionado."}
         </p>
+      </div>
+
+      <div className="space-y-2 pt-2 border-t border-border/40">
+        <Label className="text-sm font-semibold">System Prompt</Label>
+        <Textarea
+          value={systemPrompt}
+          onChange={(e) => setSystemPrompt(e.target.value)}
+          placeholder="Escribe el system prompt personalizado aquí..."
+          className="min-h-[280px] font-sans text-sm rounded-lg border-border/60 focus:ring-2 focus:ring-primary focus:ring-offset-2 p-3 bg-background"
+          data-testid="admin-system-prompt-textarea"
+        />
+        <p className="text-xs text-muted-foreground">
+          Define el rol, tono y comportamiento que asumirá la IA en el chat.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-border/40 bg-background/50 p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          <Info className="h-3.5 w-3.5 text-primary" strokeWidth={1.5} />
+          Variables de Contexto Disponibles
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Estas variables se inyectarán de forma dinámica en tu prompt según el negocio del usuario actual. Envuélvelas entre llaves <span className="font-mono">{`{...}`}</span> para usarlas:
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1">
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{company_name}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Nombre de la empresa.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{what_you_sell}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Qué vende / productos.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{ideal_customer}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Cliente ideal / clientes.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{main_problem}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Problema principal actual.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{objectives}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Objetivos de la empresa.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{products}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Detalle de productos.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{customers}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Detalle de clientes.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{competitors}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Competidores directos.</p>
+          </div>
+          <div className="text-xs p-2.5 rounded-lg border border-border/30 bg-card">
+            <span className="font-mono font-semibold text-primary">{`{market}`}</span>
+            <p className="text-muted-foreground mt-0.5 text-[11px]">Mercado e industria.</p>
+          </div>
+        </div>
       </div>
 
       <div className="pt-2 flex justify-end">
@@ -250,14 +321,20 @@ function UsersTab({ currentUserId }) {
 // ---------- Plans tab ----------
 function PlansTab() {
   const [plans, setPlans] = useState([]);
+  const [freeRegActive, setFreeRegActive] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
+  const [savingReg, setSavingReg] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/admin/plans");
-      setPlans(data);
+      const [plansRes, regRes] = await Promise.all([
+        api.get("/admin/plans"),
+        api.get("/admin/registration")
+      ]);
+      setPlans(plansRes.data);
+      setFreeRegActive(regRes.data.free_registration_active);
     } finally { setLoading(false); }
   };
 
@@ -279,6 +356,7 @@ function PlansTab() {
         features: Array.isArray(plan.features)
           ? plan.features
           : (plan.features || "").split("\n").map((s) => s.trim()).filter(Boolean),
+        active: plan.active !== false,
       };
       await api.put(`/admin/plans/${plan.plan_id}`, payload);
       await load();
@@ -288,20 +366,103 @@ function PlansTab() {
     } finally { setSaving(null); }
   };
 
+  const saveRegistration = async () => {
+    setSavingReg(true);
+    try {
+      await api.put("/admin/registration", {
+        free_registration_active: freeRegActive
+      });
+      toast.success("Configuración de registro actualizada");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "No pudimos guardar la configuración");
+    } finally {
+      setSavingReg(false);
+    }
+  };
+
   if (loading) return <div className="text-sm text-muted-foreground">Cargando…</div>;
 
   return (
     <div className="space-y-5">
+      {/* Configuración de Registro Gratis */}
+      <div className="rounded-xl border border-border/60 bg-card p-5 md:p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-base font-semibold">Configuración de Registro de Usuarios</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Si desactivas el registro gratuito, los nuevos visitantes no podrán crear cuentas gratis y deberán suscribirse a un plan de pago.
+            </p>
+          </div>
+          <button
+            onClick={() => setFreeRegActive(!freeRegActive)}
+            className={cn(
+              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+              freeRegActive ? "bg-primary" : "bg-muted"
+            )}
+          >
+            <span
+              className={cn(
+                "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out",
+                freeRegActive ? "translate-x-5" : "translate-x-0"
+              )}
+            />
+          </button>
+        </div>
+        <div className="flex justify-end pt-2 border-t border-border/40">
+          <Button
+            size="sm"
+            onClick={saveRegistration}
+            disabled={savingReg}
+            className="rounded-full h-8 px-4 text-xs"
+          >
+            {savingReg ? "Guardando…" : "Guardar Registro"}
+          </Button>
+        </div>
+      </div>
       {plans.map((p) => (
         <div key={p.plan_id} className="rounded-xl border border-border/60 bg-card p-5 md:p-6 space-y-4" data-testid={`admin-plan-${p.plan_id}`}>
           <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">ID: {p.plan_id}</div>
-              <h3 className="font-display text-lg font-semibold">{p.name}</h3>
+            <div className="flex items-center gap-2.5">
+              <div>
+                <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">ID: {p.plan_id}</div>
+                <h3 className="font-display text-lg font-semibold flex items-center gap-2 mt-0.5">
+                  {p.name}
+                  {p.active !== false ? (
+                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border-emerald-500/20 text-[10px] h-5 py-0 px-2 rounded-full">
+                      Activo
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border-amber-500/20 text-[10px] h-5 py-0 px-2 rounded-full">
+                      Archivado
+                    </Badge>
+                  )}
+                </h3>
+              </div>
             </div>
-            <Button onClick={() => save(p)} disabled={saving === p.plan_id} size="sm" className="rounded-full" data-testid={`admin-save-plan-${p.plan_id}`}>
-              {saving === p.plan_id ? "Guardando…" : "Guardar"}
-            </Button>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const newActiveValue = p.active === false ? true : false;
+                  const updatedPlan = { ...p, active: newActiveValue };
+                  update(p.plan_id, "active", newActiveValue);
+                  save(updatedPlan);
+                }}
+                disabled={saving === p.plan_id}
+                size="sm"
+                className={`rounded-full h-8 px-3.5 text-xs font-medium border transition-all duration-200 ${
+                  p.active === false
+                    ? "text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 border-emerald-500/20"
+                    : "text-amber-500 hover:text-amber-600 hover:bg-amber-500/10 border-amber-500/20"
+                }`}
+              >
+                {p.active === false ? "Activar" : "Archivar"}
+              </Button>
+              <Button onClick={() => save(p)} disabled={saving === p.plan_id} size="sm" className="rounded-full h-8" data-testid={`admin-save-plan-${p.plan_id}`}>
+                {saving === p.plan_id ? "Guardando…" : "Guardar"}
+              </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -481,6 +642,234 @@ function ApiKeysTab() {
   );
 }
 
+
+// ---------- Branding tab ----------
+function BrandingTab() {
+  const { logoLight, logoDark, companyName, fontFamily, refreshBranding } = useBranding();
+  const [newLogoLight, setNewLogoLight] = useState("");
+  const [newLogoDark, setNewLogoDark] = useState("");
+  const [newCompanyName, setNewCompanyName] = useState("");
+  const [newFontFamily, setNewFontFamily] = useState("Exo 2");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setNewLogoLight(logoLight || "");
+    setNewLogoDark(logoDark || "");
+    setNewCompanyName(companyName || "STRATELIQ");
+    setNewFontFamily(fontFamily || "Exo 2");
+  }, [logoLight, logoDark, companyName, fontFamily]);
+
+  const handleFileChange = (e, type) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!["image/png", "image/svg+xml"].includes(file.type)) {
+      toast.error("Solo se permiten archivos PNG o SVG");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (type === "light") {
+        setNewLogoLight(reader.result);
+      } else {
+        setNewLogoDark(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleReset = (type) => {
+    if (type === "light") {
+      setNewLogoLight("");
+    } else {
+      setNewLogoDark("");
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put("/admin/branding", {
+        logo_light: newLogoLight || null,
+        logo_dark: newLogoDark || null,
+        company_name: newCompanyName.trim() || "STRATELIQ",
+        font_family: newFontFamily,
+      });
+      await refreshBranding();
+      toast.success("Personalización de marca actualizada");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "No pudimos guardar los cambios de marca");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-5 md:p-6 space-y-6">
+      <div className="flex items-start gap-2.5 text-sm text-muted-foreground">
+        <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" strokeWidth={1.5} />
+        <div>
+          <span className="font-semibold text-foreground">Personalización de Marca Blanca:</span>
+          <p className="mt-1">
+            Aquí puedes personalizar la identidad visual del logo. Puedes modificar el nombre comercial que se visualiza en la interfaz, su fuente tipográfica de Google Fonts y subir logotipos independientes para el modo claro y oscuro.
+          </p>
+        </div>
+      </div>
+
+      {/* Nombre y Fuente */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 rounded-xl border border-border/40 bg-background/30">
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">Nombre de la Aplicación (Logo)</Label>
+          <Input
+            value={newCompanyName}
+            onChange={(e) => setNewCompanyName(e.target.value)}
+            placeholder="STRATELIQ"
+            className="h-10 rounded-lg"
+          />
+          <p className="text-xs text-muted-foreground">El nombre de marca que se renderiza al lado del isotipo.</p>
+        </div>
+        
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">Fuente Tipográfica (Google Fonts)</Label>
+          <select
+            value={newFontFamily}
+            onChange={(e) => setNewFontFamily(e.target.value)}
+            className="flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="Exo 2">Exo 2 (Por defecto)</option>
+            <option value="Inter">Inter</option>
+            <option value="Outfit">Outfit</option>
+            <option value="Manrope">Manrope</option>
+            <option value="Montserrat">Montserrat</option>
+            <option value="Space Grotesk">Space Grotesk</option>
+            <option value="Playfair Display">Playfair Display</option>
+            <option value="Syne">Syne</option>
+            <option value="Roboto">Roboto</option>
+            <option value="Cinzel">Cinzel</option>
+          </select>
+          <p className="text-xs text-muted-foreground">La tipografía que se cargará dinámicamente desde Google Fonts para el texto del logo.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Logo Modo Claro */}
+        <div className="space-y-3 p-4 rounded-xl border border-border/40 bg-background/50 flex flex-col justify-between">
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">Logotipo para Modo Claro</Label>
+            <p className="text-xs text-muted-foreground">Se mostrará cuando el tema de la plataforma sea claro.</p>
+          </div>
+          <div className="my-4 flex items-center justify-center h-28 border border-dashed border-border/60 rounded-lg bg-white relative group overflow-hidden">
+            {newLogoLight ? (
+              <>
+                <img src={newLogoLight} alt="Logo Light Preview" className="max-h-20 max-w-[80%] object-contain" />
+                <button
+                  onClick={() => handleReset("light")}
+                  className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-semibold rounded-lg transition-opacity duration-200"
+                >
+                  Cambiar / Quitar
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-1.5 text-muted-foreground text-xs text-center p-4">
+                <Image className="h-6 w-6 text-muted-foreground/60" strokeWidth={1.5} />
+                <span>No hay logotipo personalizado</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="w-full relative h-10 rounded-lg border border-border"
+              asChild
+            >
+              <label className="cursor-pointer flex items-center justify-center gap-1.5 text-xs">
+                <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
+                Subir Logo Claro
+                <input
+                  type="file"
+                  accept="image/png, image/svg+xml"
+                  onChange={(e) => handleFileChange(e, "light")}
+                  className="hidden"
+                />
+              </label>
+            </Button>
+            {newLogoLight && (
+              <Button
+                variant="ghost"
+                onClick={() => handleReset("light")}
+                className="h-10 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                Quitar
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Logo Modo Oscuro */}
+        <div className="space-y-3 p-4 rounded-xl border border-border/40 bg-background/50 flex flex-col justify-between">
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">Logotipo para Modo Oscuro</Label>
+            <p className="text-xs text-muted-foreground">Se mostrará cuando el tema de la plataforma sea oscuro.</p>
+          </div>
+          <div className="my-4 flex items-center justify-center h-28 border border-dashed border-border/60 rounded-lg bg-[#06080F] relative group overflow-hidden">
+            {newLogoDark ? (
+              <>
+                <img src={newLogoDark} alt="Logo Dark Preview" className="max-h-20 max-w-[80%] object-contain" />
+                <button
+                  onClick={() => handleReset("dark")}
+                  className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-semibold rounded-lg transition-opacity duration-200"
+                >
+                  Cambiar / Quitar
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-1.5 text-muted-foreground text-xs text-center p-4">
+                <Image className="h-6 w-6 text-muted-foreground/60" strokeWidth={1.5} />
+                <span>No hay logotipo personalizado</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="w-full relative h-10 rounded-lg border border-border"
+              asChild
+            >
+              <label className="cursor-pointer flex items-center justify-center gap-1.5 text-xs">
+                <Upload className="h-3.5 w-3.5" strokeWidth={1.5} />
+                Subir Logo Oscuro
+                <input
+                  type="file"
+                  accept="image/png, image/svg+xml"
+                  onChange={(e) => handleFileChange(e, "dark")}
+                  className="hidden"
+                />
+              </label>
+            </Button>
+            {newLogoDark && (
+              <Button
+                variant="ghost"
+                onClick={() => handleReset("dark")}
+                className="h-10 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                Quitar
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="pt-2 flex justify-end">
+        <Button onClick={save} disabled={saving} className="rounded-full h-10 px-5" data-testid="admin-branding-save-btn">
+          {saving ? "Guardando…" : (<><Check className="h-4 w-4 mr-1.5" strokeWidth={1.5} />Guardar</>)}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function Admin() {
   const { user } = useAuth();
   if (user && !user.is_admin) return <Navigate to="/app" replace />;
@@ -495,17 +884,19 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue="model" className="w-full">
-        <TabsList className="grid grid-cols-4 w-full md:w-auto md:inline-flex mb-6" data-testid="admin-tabs">
+        <TabsList className="grid grid-cols-5 w-full md:w-auto md:inline-flex mb-6" data-testid="admin-tabs">
           <TabsTrigger value="model" data-testid="tab-model" className="gap-1.5"><Shield className="h-3.5 w-3.5" strokeWidth={1.5} />Modelo</TabsTrigger>
           <TabsTrigger value="users" data-testid="tab-users" className="gap-1.5"><Users className="h-3.5 w-3.5" strokeWidth={1.5} />Usuarios</TabsTrigger>
           <TabsTrigger value="plans" data-testid="tab-plans" className="gap-1.5"><LayoutList className="h-3.5 w-3.5" strokeWidth={1.5} />Planes</TabsTrigger>
           <TabsTrigger value="keys" data-testid="tab-keys" className="gap-1.5"><KeyRound className="h-3.5 w-3.5" strokeWidth={1.5} />API Keys</TabsTrigger>
+          <TabsTrigger value="branding" data-testid="tab-branding" className="gap-1.5"><Palette className="h-3.5 w-3.5" strokeWidth={1.5} />Personalización</TabsTrigger>
         </TabsList>
 
         <TabsContent value="model"><ModelTab /></TabsContent>
         <TabsContent value="users"><UsersTab currentUserId={user.user_id} /></TabsContent>
         <TabsContent value="plans"><PlansTab /></TabsContent>
         <TabsContent value="keys"><ApiKeysTab /></TabsContent>
+        <TabsContent value="branding"><BrandingTab /></TabsContent>
       </Tabs>
     </div>
   );
