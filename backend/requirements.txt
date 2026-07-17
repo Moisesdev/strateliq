@@ -121,7 +121,7 @@ uritemplate==4.2.0
 urllib3==2.7.0
 uvicorn==0.25.0
 watchfiles==1.2.0
-websockets==16.1
+websockets>=13.0,<16.0
 yarl==1.24.2
 zipp==4.1.0
 supabase>=2.4.0
