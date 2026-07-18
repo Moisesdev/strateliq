@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Shield, Check, Search, UserPlus, UserMinus, Trash2, KeyRound, LayoutList, Users, Palette, Upload, Image, Info, CreditCard } from "lucide-react";
+import { Shield, Check, Search, UserPlus, UserMinus, Trash2, KeyRound, LayoutList, Users, Palette, Upload, Image, Info, CreditCard, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -196,15 +196,21 @@ function ModelTab() {
   );
 }
 
-// ---------- Users tab ----------
-function UsersTab({ currentUserId }) {
+// ---------- Users function UsersTab({ currentUserId }) {
   const [users, setUsers] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
-  const [confirmDel, setConfirmDel] = useState(null);
-  const [passModalUser, setPassModalUser] = useState(null);
+  const [plans, setPlans] = useState([]);
+  
+  // Modal State
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [changingPass, setChangingPass] = useState(false);
+  const [confirmAdminText, setConfirmAdminText] = useState("");
+  const [confirmDeleteText, setConfirmDeleteText] = useState("");
+  
+  const [updatingPlan, setUpdatingPlan] = useState(false);
+  const [updatingPass, setUpdatingPass] = useState(false);
 
   const load = async (search) => {
     setLoading(true);
@@ -214,45 +220,80 @@ function UsersTab({ currentUserId }) {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  const loadPlans = async () => {
+    try {
+      const { data } = await api.get("/admin/plans");
+      setPlans(data);
+    } catch (e) {
+      console.error("No pudimos cargar los planes", e);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    loadPlans();
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => load(q), 300);
     return () => clearTimeout(t);
   }, [q]);
 
-  const toggleAdmin = async (u) => {
+  const handleToggleAdmin = async (u) => {
     try {
       const { data } = await api.put(`/admin/users/${u.user_id}`, { is_admin: !u.is_admin });
       setUsers((list) => list.map((x) => x.user_id === u.user_id ? { ...x, ...data } : x));
       toast.success(data.is_admin ? "Ahora es admin" : "Permisos removidos");
+      setSelectedUser((curr) => curr && curr.user_id === u.user_id ? { ...curr, ...data } : curr);
+      setConfirmAdminText("");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "No pudimos actualizar");
+      toast.error(e?.response?.data?.detail || "No pudimos actualizar permisos");
     }
   };
 
-  const removeUser = async () => {
-    if (!confirmDel) return;
+  const handleSavePlan = async () => {
+    if (!selectedUser) return;
+    setUpdatingPlan(true);
     try {
-      await api.delete(`/admin/users/${confirmDel.user_id}`);
-      setUsers((list) => list.filter((u) => u.user_id !== confirmDel.user_id));
-      toast.success("Usuario eliminado");
+      const { data } = await api.put(`/admin/users/${selectedUser.user_id}/plan`, { plan_id: selectedPlan });
+      setUsers((list) => list.map((x) => x.user_id === selectedUser.user_id ? { ...x, plan: data.plan } : x));
+      setSelectedUser((curr) => curr ? { ...curr, plan: data.plan } : null);
+      toast.success("Plan actualizado con éxito");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "No pudimos eliminar");
-    } finally { setConfirmDel(null); }
+      toast.error(e?.response?.data?.detail || "No pudimos actualizar el plan");
+    } finally { setUpdatingPlan(false); }
   };
 
-  const savePassword = async () => {
-    if (!newPassword.trim() || newPassword.length < 6) return;
-    setChangingPass(true);
+  const handleSavePassword = async () => {
+    if (!selectedUser || newPassword.length < 6) return;
+    setUpdatingPass(true);
     try {
-      await api.put(`/admin/users/${passModalUser.user_id}/password`, { password: newPassword });
+      await api.put(`/admin/users/${selectedUser.user_id}/password`, { password: newPassword });
       toast.success("Contraseña actualizada con éxito");
-      setPassModalUser(null);
       setNewPassword("");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "No pudimos cambiar la contraseña");
-    } finally { setChangingPass(false); }
+    } finally { setUpdatingPass(false); }
+  };
+
+  const handleRemoveUser = async (u) => {
+    try {
+      await api.delete(`/admin/users/${u.user_id}`);
+      setUsers((list) => list.filter((x) => x.user_id !== u.user_id));
+      toast.success("Usuario eliminado permanentemente");
+      setSelectedUser(null);
+      setConfirmDeleteText("");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "No pudimos eliminar al usuario");
+    }
+  };
+
+  const openSettings = (u) => {
+    setSelectedUser(u);
+    setSelectedPlan(u.plan || "gratuito");
+    setNewPassword("");
+    setConfirmAdminText("");
+    setConfirmDeleteText("");
   };
 
   return (
@@ -282,7 +323,7 @@ function UsersTab({ currentUserId }) {
                 <div className="text-sm font-medium truncate flex items-center flex-wrap gap-2">
                   {u.name}
                   {u.is_admin && (
-                    <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-[10px]">Admin</Badge>
+                    <Badge variant="outline" className="border-[hsl(var(--success))]/40 bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] text-[10px]">Admin</Badge>
                   )}
                   {u.user_id === currentUserId && (
                     <Badge variant="outline" className="text-[10px]">Tú</Badge>
@@ -293,7 +334,7 @@ function UsersTab({ currentUserId }) {
                 </div>
                 <div className="text-xs text-muted-foreground truncate">{u.email}</div>
                 {u.created_at && (
-                  <div className="text-[10px] text-muted-foreground/80">
+                  <div className="text-[10px] text-muted-foreground/85">
                     Registrado el: {new Date(u.created_at).toLocaleDateString("es-ES", {
                       day: "2-digit",
                       month: "2-digit",
@@ -307,36 +348,13 @@ function UsersTab({ currentUserId }) {
               <div className="flex items-center gap-1.5 self-end sm:self-center">
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className="rounded-full text-xs h-9 px-3"
-                  onClick={() => toggleAdmin(u)}
-                  disabled={u.user_id === currentUserId && u.is_admin}
-                  data-testid={`admin-toggle-${u.user_id}`}
-                >
-                  {u.is_admin ? (<><UserMinus className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} /> Quitar admin</>) : (<><UserPlus className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} /> Hacer admin</>)}
-                </Button>
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="rounded-full text-xs h-9 px-3"
-                  onClick={() => setPassModalUser(u)}
-                  data-testid={`admin-change-pass-${u.user_id}`}
-                >
-                  <KeyRound className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} />
-                  Clave
-                </Button>
-
-                <Button
-                  variant="ghost"
                   size="icon"
-                  className="h-9 w-9 rounded-full text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => setConfirmDel(u)}
-                  disabled={u.user_id === currentUserId}
-                  data-testid={`admin-delete-${u.user_id}`}
-                  aria-label="Eliminar usuario"
+                  className="h-9 w-9 rounded-full hover:bg-secondary"
+                  onClick={() => openSettings(u)}
+                  data-testid={`admin-settings-${u.user_id}`}
+                  aria-label="Configurar usuario"
                 >
-                  <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                  <Settings className="h-4 w-4" strokeWidth={1.5} />
                 </Button>
               </div>
             </li>
@@ -344,57 +362,142 @@ function UsersTab({ currentUserId }) {
         </ul>
       )}
 
-      <Dialog open={!!confirmDel} onOpenChange={(o) => !o && setConfirmDel(null)}>
-        <DialogContent data-testid="confirm-delete-dialog">
+      {/* Modal de Configuración de Usuario */}
+      <Dialog open={!!selectedUser} onOpenChange={(o) => !o && setSelectedUser(null)}>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto no-scrollbar">
           <DialogHeader>
-            <DialogTitle>Eliminar usuario</DialogTitle>
-            <DialogDescription>
-              Esta acción elimina permanentemente a {confirmDel?.email} y todos sus datos (empresa, conversaciones, suscripción). No se puede deshacer.
+            <DialogTitle className="text-lg font-semibold font-display">Ajustes de Usuario</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Gestiona los detalles, permisos, planes y accesos de <span className="font-semibold text-foreground">{selectedUser?.name}</span> ({selectedUser?.email}).
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDel(null)}>Cancelar</Button>
-            <Button variant="destructive" onClick={removeUser} data-testid="confirm-delete-btn">Eliminar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      <Dialog open={!!passModalUser} onOpenChange={(o) => {
-        if (!o) {
-          setPassModalUser(null);
-          setNewPassword("");
-        }
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cambiar contraseña</DialogTitle>
-            <DialogDescription>
-              Establece una nueva contraseña para <strong>{passModalUser?.email}</strong>.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 py-4">
-            <Label htmlFor="new-pass-input">Nueva contraseña</Label>
-            <Input
-              id="new-pass-input"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Min. 6 caracteres"
-              className="h-11 rounded-lg"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setPassModalUser(null);
-              setNewPassword("");
-            }}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={savePassword}
-              disabled={changingPass || newPassword.length < 6}
-            >
-              {changingPass ? "Guardando…" : "Actualizar"}
+          {selectedUser && (
+            <div className="space-y-6 py-4 divide-y divide-border/60">
+              
+              {/* Sección 1: Plan de Suscripción */}
+              <div className="space-y-3 pt-0">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plan de Suscripción</Label>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <Select value={selectedPlan} onValueChange={setSelectedPlan}>
+                      <SelectTrigger className="h-10 rounded-md text-xs">
+                        <SelectValue placeholder="Seleccionar plan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gratuito">Gratuito (Sin plan activo)</SelectItem>
+                        {plans.map((p) => (
+                          <SelectItem key={p.plan_id} value={p.plan_id} className="text-xs">
+                            {p.name} (${p.amount} / {p.period_days} días)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    onClick={handleSavePlan}
+                    disabled={updatingPlan || selectedPlan === selectedUser.plan}
+                    className="h-10 text-xs px-4"
+                  >
+                    {updatingPlan ? "Guardando…" : "Actualizar"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Sección 2: Cambiar Contraseña */}
+              <div className="space-y-3 pt-5">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cambiar Contraseña</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    className="h-10 text-xs rounded-md flex-1"
+                  />
+                  <Button
+                    onClick={handleSavePassword}
+                    disabled={updatingPass || newPassword.length < 6}
+                    className="h-10 text-xs px-4"
+                  >
+                    {updatingPass ? "Guardando…" : "Guardar"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Sección 3: Permisos de Administrador */}
+              <div className="space-y-3 pt-5">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Permisos de Administrador</Label>
+                {selectedUser.user_id === currentUserId ? (
+                  <p className="text-xs text-muted-foreground italic">No puedes revocar tus propios permisos de administrador.</p>
+                ) : selectedUser.is_admin ? (
+                  <Button
+                    variant="destructive"
+                    className="w-full h-10 text-xs rounded-md"
+                    onClick={() => handleToggleAdmin(selectedUser)}
+                  >
+                    Quitar Permisos de Administrador
+                  </Button>
+                ) : (
+                  <div className="space-y-2.5 border border-border/60 p-3 rounded-lg bg-background/50">
+                    <p className="text-[11px] text-muted-foreground leading-normal">
+                      Escribe <strong className="text-foreground font-semibold">CONFIRMAR</strong> a continuación para convertir a este usuario en administrador:
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={confirmAdminText}
+                        onChange={(e) => setConfirmAdminText(e.target.value)}
+                        placeholder="CONFIRMAR"
+                        className="h-9 text-xs rounded-md flex-1"
+                      />
+                      <Button
+                        className="h-9 text-xs px-4"
+                        onClick={() => handleToggleAdmin(selectedUser)}
+                        disabled={confirmAdminText !== "CONFIRMAR"}
+                      >
+                        Hacer Admin
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Sección 4: Zona de Peligro (Eliminar) */}
+              <div className="space-y-3 pt-5">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-destructive">Eliminar Cuenta</Label>
+                {selectedUser.user_id === currentUserId ? (
+                  <p className="text-xs text-muted-foreground italic">No puedes eliminar tu propia cuenta desde aquí.</p>
+                ) : (
+                  <div className="space-y-2.5 border border-destructive/20 p-3 rounded-lg bg-destructive/5">
+                    <p className="text-[11px] text-destructive leading-normal">
+                      Se eliminarán todos sus datos y empresa de forma permanente. Escribe <strong className="font-bold">ELIMINAR</strong> para confirmar:
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={confirmDeleteText}
+                        onChange={(e) => setConfirmDeleteText(e.target.value)}
+                        placeholder="ELIMINAR"
+                        className="h-9 text-xs border-destructive/20 text-destructive focus-visible:ring-destructive rounded-md flex-1"
+                      />
+                      <Button
+                        variant="destructive"
+                        className="h-9 text-xs px-4"
+                        onClick={() => handleRemoveUser(selectedUser)}
+                        disabled={confirmDeleteText !== "ELIMINAR"}
+                      >
+                        Eliminar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 border-t border-border/60">
+            <Button variant="outline" onClick={() => setSelectedUser(null)} className="h-9 text-xs">
+              Cerrar
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -203,6 +203,10 @@ class AdminChangePasswordInput(BaseModel):
     password: str
 
 
+class AdminChangePlanInput(BaseModel):
+    plan_id: str
+
+
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
 
@@ -603,6 +607,31 @@ async def admin_change_password(user_id: str, payload: AdminChangePasswordInput,
         return {"ok": True, "message": "Contraseña actualizada exitosamente"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"No se pudo cambiar la contraseña: {str(e)}")
+
+
+@api_router.put("/admin/users/{user_id}/plan")
+async def admin_change_plan(user_id: str, payload: AdminChangePlanInput, user=Depends(get_current_user)):
+    _require_admin(user)
+    if payload.plan_id.lower() == "gratuito":
+        # Desactivar suscripciones activas
+        await supabase.table("subscriptions").update({"status": "replaced"}).eq("user_id", user_id).eq("status", "active").execute()
+        return {"ok": True, "plan": "gratuito"}
+        
+    res = await supabase.table("plans").select("*").eq("plan_id", payload.plan_id).execute()
+    plan = res.data[0] if res.data else None
+    if not plan:
+        raise HTTPException(status_code=400, detail="Plan no encontrado")
+        
+    expires_at = now_utc() + timedelta(days=plan.get("period_days", 30))
+    await supabase.table("subscriptions").update({"status": "replaced"}).eq("user_id", user_id).eq("status", "active").execute()
+    await supabase.table("subscriptions").upsert({
+        "user_id": user_id,
+        "plan_id": payload.plan_id,
+        "status": "active",
+        "expires_at": iso(expires_at),
+        "updated_at": iso(now_utc())
+    }).execute()
+    return {"ok": True, "plan": payload.plan_id}
 
 
 @api_router.delete("/admin/users/{user_id}")
