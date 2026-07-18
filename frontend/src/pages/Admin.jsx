@@ -202,6 +202,9 @@ function UsersTab({ currentUserId }) {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [passModalUser, setPassModalUser] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [changingPass, setChangingPass] = useState(false);
 
   const load = async (search) => {
     setLoading(true);
@@ -239,6 +242,19 @@ function UsersTab({ currentUserId }) {
     } finally { setConfirmDel(null); }
   };
 
+  const savePassword = async () => {
+    if (!newPassword.trim() || newPassword.length < 6) return;
+    setChangingPass(true);
+    try {
+      await api.put(`/admin/users/${passModalUser.user_id}/password`, { password: newPassword });
+      toast.success("Contraseña actualizada con éxito");
+      setPassModalUser(null);
+      setNewPassword("");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "No pudimos cambiar la contraseña");
+    } finally { setChangingPass(false); }
+  };
+
   return (
     <div className="space-y-5">
       <div className="relative">
@@ -261,9 +277,9 @@ function UsersTab({ currentUserId }) {
       ) : (
         <ul className="divide-y divide-border/60 rounded-xl border border-border/60 bg-card overflow-hidden" data-testid="admin-users-list">
           {users.map((u) => (
-            <li key={u.user_id} className="flex items-center gap-4 px-4 py-3.5 md:px-5">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium truncate flex items-center gap-2">
+            <li key={u.user_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-4 py-4 md:px-5">
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="text-sm font-medium truncate flex items-center flex-wrap gap-2">
                   {u.name}
                   {u.is_admin && (
                     <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-[10px]">Admin</Badge>
@@ -271,30 +287,58 @@ function UsersTab({ currentUserId }) {
                   {u.user_id === currentUserId && (
                     <Badge variant="outline" className="text-[10px]">Tú</Badge>
                   )}
+                  <Badge variant="outline" className="text-[10px] uppercase border-border/60">
+                    Plan: {u.plan}
+                  </Badge>
                 </div>
                 <div className="text-xs text-muted-foreground truncate">{u.email}</div>
+                {u.created_at && (
+                  <div className="text-[10px] text-muted-foreground/80">
+                    Registrado el: {new Date(u.created_at).toLocaleDateString("es-ES", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    })}
+                  </div>
+                )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="rounded-full text-xs"
-                onClick={() => toggleAdmin(u)}
-                disabled={u.user_id === currentUserId && u.is_admin}
-                data-testid={`admin-toggle-${u.user_id}`}
-              >
-                {u.is_admin ? (<><UserMinus className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} /> Quitar admin</>) : (<><UserPlus className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} /> Hacer admin</>)}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-full text-destructive hover:text-destructive"
-                onClick={() => setConfirmDel(u)}
-                disabled={u.user_id === currentUserId}
-                data-testid={`admin-delete-${u.user_id}`}
-                aria-label="Eliminar usuario"
-              >
-                <Trash2 className="h-4 w-4" strokeWidth={1.5} />
-              </Button>
+              <div className="flex items-center gap-1.5 self-end sm:self-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full text-xs h-9 px-3"
+                  onClick={() => toggleAdmin(u)}
+                  disabled={u.user_id === currentUserId && u.is_admin}
+                  data-testid={`admin-toggle-${u.user_id}`}
+                >
+                  {u.is_admin ? (<><UserMinus className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} /> Quitar admin</>) : (<><UserPlus className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} /> Hacer admin</>)}
+                </Button>
+                
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full text-xs h-9 px-3"
+                  onClick={() => setPassModalUser(u)}
+                  data-testid={`admin-change-pass-${u.user_id}`}
+                >
+                  <KeyRound className="h-3.5 w-3.5 mr-1" strokeWidth={1.5} />
+                  Clave
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 rounded-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => setConfirmDel(u)}
+                  disabled={u.user_id === currentUserId}
+                  data-testid={`admin-delete-${u.user_id}`}
+                  aria-label="Eliminar usuario"
+                >
+                  <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
@@ -311,6 +355,47 @@ function UsersTab({ currentUserId }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmDel(null)}>Cancelar</Button>
             <Button variant="destructive" onClick={removeUser} data-testid="confirm-delete-btn">Eliminar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!passModalUser} onOpenChange={(o) => {
+        if (!o) {
+          setPassModalUser(null);
+          setNewPassword("");
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cambiar contraseña</DialogTitle>
+            <DialogDescription>
+              Establece una nueva contraseña para <strong>{passModalUser?.email}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-4">
+            <Label htmlFor="new-pass-input">Nueva contraseña</Label>
+            <Input
+              id="new-pass-input"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="Min. 6 caracteres"
+              className="h-11 rounded-lg"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setPassModalUser(null);
+              setNewPassword("");
+            }}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={savePassword}
+              disabled={changingPass || newPassword.length < 6}
+            >
+              {changingPass ? "Guardando…" : "Actualizar"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

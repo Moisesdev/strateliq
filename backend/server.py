@@ -199,6 +199,10 @@ class UserAdminUpdate(BaseModel):
     is_admin: Optional[bool] = None
 
 
+class AdminChangePasswordInput(BaseModel):
+    password: str
+
+
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
 
@@ -521,6 +525,10 @@ async def admin_set_payment_gateways(payload: PaymentGatewaysInput, user=Depends
 async def admin_list_users(user=Depends(get_current_user), q: Optional[str] = None):
     _require_admin(user)
     try:
+        # Consultar suscripciones activas de forma masiva para mapear planes
+        sub_res = await supabase.table("subscriptions").select("user_id, plan_id").eq("status", "active").execute()
+        user_plans = {item["user_id"]: item["plan_id"] for item in sub_res.data}
+
         res = await supabase.auth.admin.list_users()
         users_list = []
         for u in res:
@@ -550,7 +558,8 @@ async def admin_list_users(user=Depends(get_current_user), q: Optional[str] = No
                 "name": name,
                 "picture": u.user_metadata.get("avatar_url") if u.user_metadata else None,
                 "is_admin": is_admin,
-                "created_at": u.created_at
+                "created_at": u.created_at,
+                "plan": user_plans.get(u.id) or "gratuito"
             })
         users_list.sort(key=lambda x: x["created_at"].isoformat() if x["created_at"] else "", reverse=True)
         return users_list
@@ -581,6 +590,19 @@ async def admin_update_user(user_id: str, payload: UserAdminUpdate, user=Depends
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error al actualizar permisos de admin: {str(e)}")
     raise HTTPException(status_code=400, detail="Nada que actualizar")
+
+
+@api_router.put("/admin/users/{user_id}/password")
+async def admin_change_password(user_id: str, payload: AdminChangePasswordInput, user=Depends(get_current_user)):
+    _require_admin(user)
+    try:
+        await supabase.auth.admin.update_user_by_id(
+            user_id,
+            attributes={"password": payload.password}
+        )
+        return {"ok": True, "message": "Contraseña actualizada exitosamente"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo cambiar la contraseña: {str(e)}")
 
 
 @api_router.delete("/admin/users/{user_id}")
