@@ -126,3 +126,14 @@
         border-bottom-color: inherit;
     }
 }
+
+/* Reset y anulación de contaminación de CSS externo (ej: PayPhone) */
+#root {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+:root {
+    font-size: 16px !important;
+}

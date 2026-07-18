@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,11 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { api } from "@/lib/api";
+import { supabase } from "@/context/AuthContext";
 
 export default function ResetPassword() {
-  const [params] = useSearchParams();
-  const token = params.get("token") || "";
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,11 +17,15 @@ export default function ResetPassword() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!token) {
-      toast.error("Enlace inválido");
-      navigate("/login", { replace: true });
-    }
-  }, [token, navigate]);
+    // Verificar si hay sesión de recuperación o hash de Supabase
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const hash = window.location.hash || "";
+      if (!session && !hash.includes("access_token=")) {
+        toast.error("Enlace inválido o expirado");
+        navigate("/login", { replace: true });
+      }
+    });
+  }, [navigate]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -31,12 +33,13 @@ export default function ResetPassword() {
     if (password !== confirm) return toast.error("Las contraseñas no coinciden");
     setLoading(true);
     try {
-      await api.post("/auth/reset-password", { token, new_password: password });
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
       setDone(true);
       toast.success("Contraseña actualizada");
       setTimeout(() => navigate("/login", { replace: true }), 1200);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "El enlace es inválido o expiró");
+      toast.error(err?.message || "El enlace es inválido o expiró");
     } finally {
       setLoading(false);
     }

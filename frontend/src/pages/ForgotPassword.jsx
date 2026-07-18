@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { api } from "@/lib/api";
+import { supabase } from "@/context/AuthContext";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -18,14 +18,14 @@ export default function ForgotPassword() {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post("/auth/forgot-password", {
-        email,
-        frontend_origin: window.location.origin,
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + "/reset-password",
       });
+      if (error) throw error;
       setSent(true);
       toast.success("Revisa tu correo");
     } catch (err) {
-      toast.error("Hubo un problema, intenta nuevamente");
+      toast.error(err?.message || "Hubo un problema, intenta nuevamente");
     } finally {
       setLoading(false);
     }

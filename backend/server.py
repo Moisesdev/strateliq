@@ -38,6 +38,8 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
+PAYPHONE_TOKEN = os.environ.get('PAYPHONE_TOKEN', '')
+PAYPHONE_STORE_ID = os.environ.get('PAYPHONE_STORE_ID', '')
 
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
@@ -175,6 +177,12 @@ class ApiKeysInput(BaseModel):
     openrouter_key: Optional[str] = None
     custom_key: Optional[str] = None
     custom_base_url: Optional[str] = None
+
+
+class PaymentGatewaysInput(BaseModel):
+    stripe_api_key: Optional[str] = None
+    payphone_token: Optional[str] = None
+    payphone_store_id: Optional[str] = None
 
 
 class PlanUpdateInput(BaseModel):
@@ -464,6 +472,48 @@ async def admin_set_api_keys(payload: ApiKeysInput, user=Depends(get_current_use
     doc["updated_at"] = iso(now_utc())
     await supabase.table("admin_config").upsert({"key": "api_keys", "value": doc}).execute()
     return await admin_get_api_keys(user)
+
+
+async def get_payment_gateways():
+    """Return dict of payment gateway keys from DB, falling back to env."""
+    res = await supabase.table("admin_config").select("value").eq("key", "payment_gateways").execute()
+    doc = res.data[0]["value"] if res.data else {}
+    return {
+        "stripe_api_key": doc.get("stripe_api_key") or STRIPE_API_KEY,
+        "payphone_token": doc.get("payphone_token") or PAYPHONE_TOKEN,
+        "payphone_store_id": doc.get("payphone_store_id") or PAYPHONE_STORE_ID,
+    }
+
+
+@api_router.get("/admin/payment-gateways")
+async def admin_get_payment_gateways(user=Depends(get_current_user)):
+    _require_admin(user)
+    gateways = await get_payment_gateways()
+    return {
+        "stripe_api_key_masked": _mask_key(gateways["stripe_api_key"]),
+        "payphone_token_masked": _mask_key(gateways["payphone_token"]),
+        "payphone_store_id": gateways["payphone_store_id"],
+        "has_stripe": bool(gateways["stripe_api_key"]),
+        "has_payphone": bool(gateways["payphone_token"] and gateways["payphone_store_id"]),
+    }
+
+
+@api_router.put("/admin/payment-gateways")
+async def admin_set_payment_gateways(payload: PaymentGatewaysInput, user=Depends(get_current_user)):
+    _require_admin(user)
+    res = await supabase.table("admin_config").select("value").eq("key", "payment_gateways").execute()
+    doc = res.data[0]["value"] if res.data else {}
+    
+    for field in ["stripe_api_key", "payphone_token", "payphone_store_id"]:
+        val = getattr(payload, field)
+        if val is not None:
+            if val.strip().startswith("•"):
+                continue
+            doc[field] = val.strip()
+            
+    doc["updated_at"] = iso(now_utc())
+    await supabase.table("admin_config").upsert({"key": "payment_gateways", "value": doc}).execute()
+    return await admin_get_payment_gateways(user)
 
 
 # --- Users management ---
@@ -852,6 +902,136 @@ async def get_subscription(user=Depends(get_current_user)):
     }
 
 
+class PayphoneSessionInput(BaseModel):
+    plan_id: str
+
+
+class PayphoneConfirmInput(BaseModel):
+    id: int
+    clientTransactionId: str
+
+
+@api_router.post("/checkout/session/payphone")
+async def create_payphone_session(payload: PayphoneSessionInput, user=Depends(get_current_user)):
+    gateways = await get_payment_gateways()
+    payphone_token = gateways["payphone_token"]
+    payphone_store_id = gateways["payphone_store_id"]
+    
+    if not payphone_token or not payphone_store_id:
+        raise HTTPException(status_code=500, detail="PayPhone no está configurado en el servidor")
+
+    plan = await get_plan(payload.plan_id)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Plan no encontrado")
+
+    # Generate unique transaction ID
+    client_tx_id = f"pp_tx_{user['user_id'][:8]}_{payload.plan_id}_{uuid.uuid4().hex[:8]}"
+
+    amount_cents = int(plan["amount"] * 100)
+
+    # Insert into payment_transactions to track
+    await supabase.table("payment_transactions").insert({
+        "session_id": client_tx_id,
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "plan_id": payload.plan_id,
+        "amount": plan["amount"],
+        "currency": plan["currency"].upper(),
+        "payment_status": "initiated",
+        "status": "pending",
+        "created_at": iso(now_utc()),
+        "updated_at": iso(now_utc())
+    }).execute()
+
+    return {
+        "token": payphone_token,
+        "storeId": payphone_store_id,
+        "clientTransactionId": client_tx_id,
+        "amount": amount_cents,
+        "amountWithoutTax": amount_cents,
+        "amountWithTax": 0,
+        "tax": 0,
+        "currency": plan["currency"].upper(),
+        "reference": f"Suscripción plan {plan['name']}"
+    }
+
+
+@api_router.post("/checkout/confirm/payphone")
+async def confirm_payphone_payment(payload: PayphoneConfirmInput, user=Depends(get_current_user)):
+    gateways = await get_payment_gateways()
+    payphone_token = gateways["payphone_token"]
+    
+    if not payphone_token:
+        raise HTTPException(status_code=500, detail="PayPhone no está configurado en el servidor")
+
+    # Search transaction by clientTransactionId and user_id to ensure ownership
+    tx_res = await supabase.table("payment_transactions").select("*").eq("session_id", payload.clientTransactionId).eq("user_id", user["user_id"]).execute()
+    tx = tx_res.data[0] if tx_res.data else None
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transacción de pago no encontrada o no pertenece al usuario")
+
+    if tx.get("payment_status") == "paid":
+        return {"ok": True, "status": "Approved", "message": "El pago ya fue verificado e instalado anteriormente"}
+
+    # Call PayPhone API to confirm
+    confirm_url = "https://paymentbox.payphonetodoesposible.com/api/confirm"
+    headers = {
+        "Authorization": f"Bearer {payphone_token}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "id": payload.id,
+        "clientTxId": payload.clientTransactionId
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(confirm_url, headers=headers, json=data, timeout=10.0)
+            if resp.status_code != 200:
+                logger.error(f"PayPhone API returned status code {resp.status_code}: {resp.text}")
+                raise HTTPException(status_code=400, detail=f"Error al consultar estado de pago en PayPhone: {resp.text}")
+            
+            resp_data = resp.json()
+            tx_status = resp_data.get("transactionStatus")
+            
+            if tx_status == "Approved":
+                # Update transaction status
+                await supabase.table("payment_transactions").update({
+                    "payment_status": "paid",
+                    "status": "completed",
+                    "updated_at": iso(now_utc())
+                }).eq("session_id", payload.clientTransactionId).execute()
+
+                # Activate subscription
+                await _activate_subscription(user["user_id"], tx["plan_id"])
+                
+                # Send confirmation email via Resend if enabled
+                if RESEND_API_KEY and user["email"]:
+                    try:
+                        resend.Emails.send({
+                            "from": SENDER_EMAIL,
+                            "to": user["email"],
+                            "subject": "¡Tu suscripción en STRATELIQ está activa!",
+                            "html": f"<p>Hola {user['name']},</p><p>Tu pago ha sido procesado con éxito a través de PayPhone. Ya tienes activo el plan <strong>{tx['plan_id'].upper()}</strong>.</p><p>¡Gracias por confiar en STRATELIQ!</p>"
+                        })
+                    except Exception as e:
+                        logger.error(f"Error sending email via Resend: {e}")
+
+                return {"ok": True, "status": "Approved", "message": "Pago aprobado y suscripción activada"}
+            else:
+                # Update status with failed state
+                await supabase.table("payment_transactions").update({
+                    "payment_status": tx_status.lower() if tx_status else "failed",
+                    "status": "failed",
+                    "updated_at": iso(now_utc())
+                }).eq("session_id", payload.clientTransactionId).execute()
+                return {"ok": False, "status": tx_status, "message": f"El pago no fue aprobado: {tx_status}"}
+
+    except httpx.RequestError as exc:
+        logger.error(f"HTTP Request failed while calling PayPhone: {exc}")
+        raise HTTPException(status_code=500, detail="Error de comunicación con el servidor de PayPhone")
+
+
 @api_router.post("/checkout/session")
 async def create_checkout(payload: CheckoutInput, request: Request, user=Depends(get_current_user)):
     plan = await get_plan(payload.plan_id)
@@ -874,7 +1054,9 @@ async def create_checkout(payload: CheckoutInput, request: Request, user=Depends
         }).execute()
         return {"url": plan["stripe_payment_link"], "session_id": session_id, "type": "payment_link"}
 
-    if not STRIPE_API_KEY:
+    gateways = await get_payment_gateways()
+    stripe_key = gateways["stripe_api_key"]
+    if not stripe_key:
         raise HTTPException(status_code=500, detail="Stripe no configurado")
 
     origin = payload.origin_url.rstrip("/")
@@ -883,7 +1065,7 @@ async def create_checkout(payload: CheckoutInput, request: Request, user=Depends
 
     host_url = str(request.base_url)
     webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
 
     req = CheckoutSessionRequest(
         amount=plan["amount"],
@@ -935,9 +1117,14 @@ async def checkout_status(session_id: str, request: Request, user=Depends(get_cu
     if not tx:
         raise HTTPException(status_code=404, detail="Transacción no encontrada")
 
+    gateways = await get_payment_gateways()
+    stripe_key = gateways["stripe_api_key"]
+    if not stripe_key:
+        raise HTTPException(status_code=500, detail="Stripe no configurado")
+
     host_url = str(request.base_url)
     webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
     status = await stripe_checkout.get_checkout_status(session_id)
 
     already_paid = tx.get("payment_status") == "paid"
@@ -965,13 +1152,15 @@ async def checkout_status(session_id: str, request: Request, user=Depends(get_cu
 
 @api_router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    if not STRIPE_API_KEY:
+    gateways = await get_payment_gateways()
+    stripe_key = gateways["stripe_api_key"]
+    if not stripe_key:
         return {"ok": False}
     body = await request.body()
     sig = request.headers.get("Stripe-Signature", "")
     host_url = str(request.base_url)
     webhook_url = f"{host_url.rstrip('/')}/api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    stripe_checkout = StripeCheckout(api_key=stripe_key, webhook_url=webhook_url)
     try:
         evt = await stripe_checkout.handle_webhook(body, sig)
     except Exception:

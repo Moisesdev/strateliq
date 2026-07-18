@@ -66,7 +66,7 @@ export function AuthProvider({ children }) {
       }
     });
     if (error) throw error;
-    return data.user;
+    return data;
   };
 
   const loginGoogle = async () => {

@@ -68,6 +68,11 @@ export default function Billing() {
   const [params, setParams] = useSearchParams();
   const polledRef = useRef(false);
 
+  const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
+  const [payphoneConfig, setPayphoneConfig] = useState(null);
+  const [payphoneLoading, setPayphoneLoading] = useState(false);
+  const [showMethodModal, setShowMethodModal] = useState(false);
+
   const loadState = async () => {
     const [{ data: p }, { data: s }] = await Promise.all([
       api.get("/plans"),
@@ -79,48 +84,88 @@ export default function Billing() {
 
   useEffect(() => { loadState(); }, []);
 
-  // Handle return from Stripe
+  // Handle return from Stripe or PayPhone
   useEffect(() => {
     const sessionId = params.get("session_id");
     const canceled = params.get("canceled");
+    const payphoneId = params.get("id");
+    const clientTransactionId = params.get("clientTransactionId");
+
     if (canceled) {
       toast.info("Pago cancelado");
       setParams({}, { replace: true });
       return;
     }
-    if (!sessionId || polledRef.current) return;
-    polledRef.current = true;
-    setPollStatus("pending");
 
-    const poll = async (attempt = 0) => {
-      if (attempt >= 8) {
-        setPollStatus("timeout");
-        toast.error("Verificación de pago tardó demasiado. Recarga esta página.");
-        return;
-      }
-      try {
-        const { data } = await api.get(`/checkout/status/${sessionId}`);
-        if (data.payment_status === "paid") {
-          setPollStatus("paid");
-          toast.success("¡Pago exitoso! Tu plan está activo.");
-          await loadState();
+    if (sessionId) {
+      if (polledRef.current) return;
+      polledRef.current = true;
+      setPollStatus("pending");
+
+      const poll = async (attempt = 0) => {
+        if (attempt >= 8) {
+          setPollStatus("timeout");
+          toast.error("Verificación de pago tardó demasiado. Recarga esta página.");
+          return;
+        }
+        try {
+          const { data } = await api.get(`/checkout/status/${sessionId}`);
+          if (data.payment_status === "paid") {
+            setPollStatus("paid");
+            toast.success("¡Pago exitoso! Tu plan está activo.");
+            await loadState();
+            setParams({}, { replace: true });
+            return;
+          }
+          if (data.status === "expired") {
+            setPollStatus("expired");
+            toast.error("La sesión de pago expiró.");
+            return;
+          }
+          setTimeout(() => poll(attempt + 1), 2000);
+        } catch (e) {
+          setTimeout(() => poll(attempt + 1), 2000);
+        }
+      };
+      poll();
+    } else if (payphoneId && clientTransactionId) {
+      if (polledRef.current) return;
+      polledRef.current = true;
+      setPollStatus("pending");
+
+      const confirmPayphone = async () => {
+        try {
+          const { data } = await api.post("/checkout/confirm/payphone", {
+            id: parseInt(payphoneId, 10),
+            clientTransactionId: clientTransactionId
+          });
+          if (data.ok && data.status === "Approved") {
+            setPollStatus("paid");
+            toast.success("¡Pago exitoso! Tu plan está activo.");
+            await loadState();
+          } else {
+            setPollStatus("failed");
+            toast.error(data.message || "El pago no fue aprobado.");
+          }
           setParams({}, { replace: true });
-          return;
+        } catch (e) {
+          setPollStatus("failed");
+          toast.error("Error al confirmar el pago con PayPhone.");
+          setParams({}, { replace: true });
         }
-        if (data.status === "expired") {
-          setPollStatus("expired");
-          toast.error("La sesión de pago expiró.");
-          return;
-        }
-        setTimeout(() => poll(attempt + 1), 2000);
-      } catch (e) {
-        setTimeout(() => poll(attempt + 1), 2000);
-      }
-    };
-    poll();
-  }, []);
+      };
+      confirmPayphone();
+    }
+  }, [params]);
 
-  const selectPlan = async (planId) => {
+  const handleSelectPlan = (planId) => {
+    setSelectedPlanForPayment(planId);
+    setShowMethodModal(true);
+  };
+
+  const payWithStripe = async (planId) => {
+    setShowMethodModal(false);
+    setSelectedPlanForPayment(null);
     setCheckoutLoading(true);
     try {
       const { data } = await api.post("/checkout/session", {
@@ -131,6 +176,47 @@ export default function Billing() {
     } catch (e) {
       toast.error("No pudimos iniciar el pago");
       setCheckoutLoading(false);
+    }
+  };
+
+  const payWithPayphone = async (planId) => {
+    setPayphoneLoading(true);
+    try {
+      const { data } = await api.post("/checkout/session/payphone", {
+        plan_id: planId
+      });
+      setPayphoneConfig(data);
+      
+      // Wait for the modal container to render and mount the widget
+      setTimeout(() => {
+        const renderWidget = () => {
+          if (window.PPaymentButtonBox) {
+            const container = document.getElementById("pp-button");
+            if (container) {
+              container.innerHTML = "";
+              const ppb = new window.PPaymentButtonBox({
+                token: data.token,
+                storeId: data.storeId,
+                clientTransactionId: data.clientTransactionId,
+                amount: data.amount,
+                amountWithoutTax: data.amountWithoutTax,
+                amountWithTax: data.amountWithTax,
+                tax: data.tax,
+                currency: data.currency,
+                reference: data.reference
+              });
+              ppb.render("pp-button");
+            }
+          } else {
+            setTimeout(renderWidget, 100);
+          }
+        };
+        renderWidget();
+      }, 100);
+    } catch (e) {
+      toast.error("No pudimos iniciar el pago con PayPhone");
+    } finally {
+      setPayphoneLoading(false);
     }
   };
 
@@ -170,7 +256,7 @@ export default function Billing() {
             amount={p.amount}
             currency={p.currency}
             current={sub?.plan_id === p.id && sub?.status === "active"}
-            onSelect={selectPlan}
+            onSelect={handleSelectPlan}
             loading={checkoutLoading}
             highlight={p.id === "pro"}
           />
@@ -179,8 +265,89 @@ export default function Billing() {
 
       <div className="mt-10 flex items-center gap-2 text-xs text-muted-foreground">
         <CreditCard className="h-3.5 w-3.5" strokeWidth={1.5} />
-        Pago seguro con Stripe · cancela cuando quieras
+        Pago seguro · cancela cuando quieras
       </div>
+
+      {showMethodModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div 
+            className="bg-card rounded-2xl border border-border/40 p-6 md:p-8 max-w-md w-full shadow-lg relative flex flex-col animate-in zoom-in-95 duration-200"
+            data-testid="payment-method-modal"
+          >
+            <button
+              onClick={() => {
+                setShowMethodModal(false);
+                setSelectedPlanForPayment(null);
+                setPayphoneConfig(null);
+              }}
+              className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md"
+              aria-label="Cerrar"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+
+            {!payphoneConfig ? (
+              <>
+                <div className="mb-6">
+                  <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-1">Método de pago</div>
+                  <h3 className="font-display text-xl font-semibold tracking-tight">Elige cómo pagar</h3>
+                  <p className="text-xs text-muted-foreground mt-1">Selecciona la pasarela de tu preferencia.</p>
+                </div>
+
+                <div className="space-y-3">
+                  <button
+                    onClick={() => payWithStripe(selectedPlanForPayment)}
+                    disabled={checkoutLoading}
+                    className="w-full text-left p-4 rounded-xl border border-border/40 hover:border-primary/50 bg-card hover:bg-muted/10 transition-all flex items-center gap-4 group animate-in slide-in-from-bottom-2 duration-200"
+                  >
+                    <div className="h-10 w-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                      <CreditCard className="h-5 w-5" strokeWidth={1.5} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium group-hover:text-primary transition-colors">Tarjeta Internacional (Stripe)</div>
+                      <div className="text-xs text-muted-foreground">Visa, MasterCard, Amex, etc.</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => payWithPayphone(selectedPlanForPayment)}
+                    disabled={payphoneLoading}
+                    className="w-full text-left p-4 rounded-xl border border-border/40 hover:border-primary/50 bg-card hover:bg-muted/10 transition-all flex items-center gap-4 group animate-in slide-in-from-bottom-3 duration-200"
+                  >
+                    <div className="h-10 w-10 rounded-lg bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] flex items-center justify-center shrink-0">
+                      <Sparkles className="h-5 w-5" strokeWidth={1.5} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium group-hover:text-primary transition-colors">Tarjeta Local / PayPhone (Ecuador)</div>
+                      <div className="text-xs text-muted-foreground">Visa, MasterCard, Diners, Discover, Saldo</div>
+                    </div>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center py-4">
+                <div className="text-center mb-6 animate-in fade-in duration-200">
+                  <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-1">Pasarela PayPhone</div>
+                  <h3 className="font-display text-lg font-semibold tracking-tight">Completa tu pago</h3>
+                  <p className="text-xs text-muted-foreground mt-1">Usa tu tarjeta local o tu cuenta PayPhone.</p>
+                </div>
+                
+                <div className="w-full bg-card rounded-xl border border-border/30 p-4 mb-6 flex justify-between items-center text-sm animate-in fade-in duration-200">
+                  <span className="text-muted-foreground">Total a pagar:</span>
+                  <span className="font-semibold text-lg">${(payphoneConfig.amount / 100).toFixed(2)} USD</span>
+                </div>
+
+                <div id="pp-button" className="w-full min-h-[50px] flex justify-center py-2 animate-in zoom-in-95 duration-200">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                    Cargando widget de PayPhone…
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

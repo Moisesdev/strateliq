@@ -30,7 +30,7 @@ export default function Login() {
       toast.success("Bienvenido de vuelta");
       navigate("/app", { replace: true });
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Credenciales inválidas");
+      toast.error(err?.message || err?.response?.data?.detail || "Credenciales inválidas");
     } finally {
       setLoading(false);
     }

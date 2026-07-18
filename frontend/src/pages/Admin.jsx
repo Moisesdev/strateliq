@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Shield, Check, Search, UserPlus, UserMinus, Trash2, KeyRound, LayoutList, Users, Palette, Upload, Image, Info } from "lucide-react";
+import { Shield, Check, Search, UserPlus, UserMinus, Trash2, KeyRound, LayoutList, Users, Palette, Upload, Image, Info, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -643,6 +643,124 @@ function ApiKeysTab() {
 }
 
 
+// ---------- Payment Gateways tab ----------
+function PaymentGatewaysTab() {
+  const [state, setState] = useState({
+    stripe_api_key_masked: "", payphone_token_masked: "", payphone_store_id: "",
+    has_stripe: false, has_payphone: false,
+  });
+  const [stripeApiKey, setStripeApiKey] = useState("");
+  const [payphoneToken, setPayphoneToken] = useState("");
+  const [payphoneStoreId, setPayphoneStoreId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    try {
+      const { data } = await api.get("/admin/payment-gateways");
+      setState(data);
+      setPayphoneStoreId(data.payphone_store_id || "");
+    } catch (e) {
+      toast.error("No pudimos cargar la configuración de pagos");
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload = { payphone_store_id: payphoneStoreId };
+      if (stripeApiKey) payload.stripe_api_key = stripeApiKey;
+      if (payphoneToken) payload.payphone_token = payphoneToken;
+      const { data } = await api.put("/admin/payment-gateways", payload);
+      setState(data);
+      setStripeApiKey(""); setPayphoneToken("");
+      toast.success("Pasarelas de Pago actualizadas");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "No pudimos guardar");
+    } finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="text-sm text-muted-foreground">Cargando…</div>;
+
+  return (
+    <div className="space-y-5 animate-in fade-in duration-200">
+      <div className="rounded-xl border border-border/60 bg-card p-5 md:p-6 space-y-6">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <CreditCard className="h-4 w-4 text-primary" strokeWidth={1.5} />
+          Configurá las credenciales de Stripe y PayPhone. Se priorizan sobre las variables de entorno de Railway.
+        </div>
+
+        <div className="space-y-4">
+          <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-semibold">Stripe</div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Stripe API Key (Secret Key)</Label>
+              {state.has_stripe && (
+                <Badge variant="outline" className="border-[hsl(var(--success))]/40 bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] text-[10px]">
+                  {state.stripe_api_key_masked}
+                </Badge>
+              )}
+            </div>
+            <Input
+              type="password"
+              value={stripeApiKey}
+              onChange={(e) => setStripeApiKey(e.target.value)}
+              placeholder={state.has_stripe ? "Dejar vacío para conservar la actual" : "sk_live_..."}
+              className="h-11 rounded-lg"
+              data-testid="admin-gateway-stripe"
+            />
+            <p className="text-xs text-muted-foreground">Clave privada (Secret Key) de Stripe para procesar cobros internacionales.</p>
+          </div>
+        </div>
+
+        <div className="pt-6 border-t border-border/60 space-y-4">
+          <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-semibold">PayPhone</div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label>Token de autenticación (Bearer Token)</Label>
+              {state.has_payphone && (
+                <Badge variant="outline" className="border-[hsl(var(--success))]/40 bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] text-[10px]">
+                  {state.payphone_token_masked}
+                </Badge>
+              )}
+            </div>
+            <Input
+              type="password"
+              value={payphoneToken}
+              onChange={(e) => setPayphoneToken(e.target.value)}
+              placeholder={state.has_payphone ? "Dejar vacío para conservar la actual" : "token de autenticación"}
+              className="h-11 rounded-lg"
+              data-testid="admin-gateway-payphone-token"
+            />
+            <p className="text-xs text-muted-foreground">Token Bearer generado en la consola de desarrollador de PayPhone.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Store ID</Label>
+            <Input
+              value={payphoneStoreId}
+              onChange={(e) => setPayphoneStoreId(e.target.value)}
+              placeholder="Store ID de la sucursal"
+              className="h-11 rounded-lg"
+              data-testid="admin-gateway-payphone-store"
+            />
+            <p className="text-xs text-muted-foreground">El ID único que identifica tu sucursal o comercio dentro de PayPhone.</p>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <Button onClick={save} disabled={saving} className="rounded-full h-10 px-5" data-testid="admin-gateways-save-btn">
+            {saving ? "Guardando…" : (<><Check className="h-4 w-4 mr-1.5" strokeWidth={1.5} />Guardar</>)}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ---------- Branding tab ----------
 function BrandingTab() {
   const { logoLight, logoDark, companyName, fontFamily, refreshBranding } = useBranding();
@@ -884,11 +1002,12 @@ export default function Admin() {
       </div>
 
       <Tabs defaultValue="model" className="w-full">
-        <TabsList className="grid grid-cols-5 w-full md:w-auto md:inline-flex mb-6" data-testid="admin-tabs">
+        <TabsList className="grid grid-cols-3 md:grid-cols-6 w-full md:w-auto md:inline-flex mb-6" data-testid="admin-tabs">
           <TabsTrigger value="model" data-testid="tab-model" className="gap-1.5"><Shield className="h-3.5 w-3.5" strokeWidth={1.5} />Modelo</TabsTrigger>
           <TabsTrigger value="users" data-testid="tab-users" className="gap-1.5"><Users className="h-3.5 w-3.5" strokeWidth={1.5} />Usuarios</TabsTrigger>
           <TabsTrigger value="plans" data-testid="tab-plans" className="gap-1.5"><LayoutList className="h-3.5 w-3.5" strokeWidth={1.5} />Planes</TabsTrigger>
           <TabsTrigger value="keys" data-testid="tab-keys" className="gap-1.5"><KeyRound className="h-3.5 w-3.5" strokeWidth={1.5} />API Keys</TabsTrigger>
+          <TabsTrigger value="gateways" data-testid="tab-gateways" className="gap-1.5"><CreditCard className="h-3.5 w-3.5" strokeWidth={1.5} />Pasarelas</TabsTrigger>
           <TabsTrigger value="branding" data-testid="tab-branding" className="gap-1.5"><Palette className="h-3.5 w-3.5" strokeWidth={1.5} />Personalización</TabsTrigger>
         </TabsList>
 
@@ -896,6 +1015,7 @@ export default function Admin() {
         <TabsContent value="users"><UsersTab currentUserId={user.user_id} /></TabsContent>
         <TabsContent value="plans"><PlansTab /></TabsContent>
         <TabsContent value="keys"><ApiKeysTab /></TabsContent>
+        <TabsContent value="gateways"><PaymentGatewaysTab /></TabsContent>
         <TabsContent value="branding"><BrandingTab /></TabsContent>
       </Tabs>
     </div>

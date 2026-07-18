@@ -48,11 +48,16 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await register(email, password, name);
-      toast.success("Cuenta creada");
-      navigate("/onboarding", { replace: true });
+      const data = await register(email, password, name);
+      if (data?.session) {
+        toast.success("Cuenta creada e inicio de sesión exitoso");
+        navigate("/onboarding", { replace: true });
+      } else {
+        toast.success("Cuenta creada. Por favor, confirma tu correo electrónico para iniciar sesión.");
+        navigate("/login", { replace: true });
+      }
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "No pudimos crear tu cuenta");
+      toast.error(err?.message || "No pudimos crear tu cuenta");
     } finally {
       setLoading(false);
     }
