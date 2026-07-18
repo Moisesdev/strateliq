@@ -196,7 +196,8 @@ function ModelTab() {
   );
 }
 
-// ---------- Users function UsersTab({ currentUserId }) {
+// ---------- Users tab ----------
+function UsersTab({ currentUserId }) {
   const [users, setUsers] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
